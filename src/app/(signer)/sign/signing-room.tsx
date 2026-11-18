@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useRouter } from 'next/navigation';
 import { Button, Notice } from '@/components/ui';
 import { FIELD_LABEL, type FieldType } from '@/lib/fields';
-import { completeAction, fillFieldAction } from './actions';
+import { approveAction, completeAction, fillFieldAction } from './actions';
+import { DeclineControl } from './decline';
 import { SignatureDialog } from './signature-dialog';
 
 export interface RoomField {
@@ -26,6 +27,8 @@ interface Props {
   fields: RoomField[];
   adopted: { signature: boolean; initials: boolean };
   intentText: string;
+  /** sign: fill fields and sign. approve: read, then approve or decline. view: read only. */
+  mode: 'sign' | 'approve' | 'view';
 }
 interface PageInfo {
   width: number;
@@ -42,7 +45,7 @@ const localDate = () => {
 const noSubscribe = () => () => {};
 const isTyped = (t: FieldType) => t === 'company' || t === 'title' || t === 'text';
 
-export function SigningRoom({ title, senderLine, signer, fields, adopted, intentText }: Props) {
+export function SigningRoom({ title, senderLine, signer, fields, adopted, intentText, mode }: Props) {
   const router = useRouter();
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -175,8 +178,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
     setFinishing(true);
     setFinishError(null);
     // make sure every typed value has reached the server before completing
-    for (const f of fields) if (isTyped(f.type)) await saveValue(f);
-    const res = await completeAction(localDate()).catch(() => ({ ok: false as const, message: 'We could not reach the server. Nothing was signed. Try again.' }));
+    if (mode === 'sign') for (const f of fields) if (isTyped(f.type)) await saveValue(f);
+    const res = await (mode === 'approve' ? approveAction() : completeAction(localDate())).catch(() => ({ ok: false as const, message: 'We could not reach the server. Nothing was recorded. Try again.' }));
     if (!res.ok) {
       setFinishing(false);
       setFinishError(res.message);
@@ -195,20 +198,32 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
             <p className="text-sm text-ink-muted">{senderLine}</p>
             <h1 className="truncate text-lg font-medium text-ink">{title}</h1>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <p role="status" className="text-sm text-ink-body">
-              {doneCount} of {required.length} done
-            </p>
-            {remaining.length > 0 ? (
-              <Button type="button" onClick={goNext}>
-                {doneCount === 0 ? 'Start' : 'Next'}
-              </Button>
-            ) : (
+          {mode === 'view' ? (
+            <p className="text-sm text-ink-body">For your information. Nothing is needed from you.</p>
+          ) : mode === 'approve' ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <DeclineControl />
               <Button type="button" onClick={openConfirm}>
-                Finish
+                Approve
               </Button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <p role="status" className="text-sm text-ink-body">
+                {doneCount} of {required.length} done
+              </p>
+              <DeclineControl variant="quiet" className="px-2" />
+              {remaining.length > 0 ? (
+                <Button type="button" onClick={goNext}>
+                  {doneCount === 0 ? 'Start' : 'Next'}
+                </Button>
+              ) : (
+                <Button type="button" onClick={openConfirm}>
+                  Finish
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -318,11 +333,11 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
         >
           <div className="flex flex-col gap-4 p-5 sm:p-6">
             <h2 id="finish-title" className="text-xl font-medium text-ink">
-              Sign this document
+              {mode === 'approve' ? 'Approve this document' : 'Sign this document'}
             </h2>
             <p className="text-base text-ink-body">{intentText}</p>
             <p className="text-sm text-ink-muted">
-              Signing as {signer.name} ({signer.email}). After this step the document cannot be changed.
+              {mode === 'approve' ? 'Approving' : 'Signing'} as {signer.name} ({signer.email}). {mode === 'approve' ? 'After this step your approval cannot be withdrawn here.' : 'After this step the document cannot be changed.'}
             </p>
             {finishError ? <Notice tone="danger">{finishError}</Notice> : null}
             <div className="flex flex-wrap justify-end gap-2">
@@ -330,7 +345,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                 Go back
               </Button>
               <Button type="button" onClick={() => void finish()} disabled={finishing}>
-                {finishing ? 'Signing…' : 'Adopt and Sign'}
+                {finishing ? 'One moment…' : mode === 'approve' ? 'Approve' : 'Adopt and Sign'}
               </Button>
             </div>
           </div>

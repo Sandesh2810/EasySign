@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
-import { CONSENT_PARAGRAPHS, INTENT_TEXT } from '@/config/legal';
+import { APPROVE_TEXT, CONSENT_PARAGRAPHS, INTENT_TEXT } from '@/config/legal';
 import type { FieldType } from '@/lib/fields';
 import { loadSignerContext } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ConsentForm } from './consent-form';
+import { DeclineControl } from './decline';
 import { Finalising } from './finalising';
 import { SigningRoom, type RoomField } from './signing-room';
 
@@ -68,30 +69,55 @@ async function Sign() {
   if (!['sent', 'in_progress', 'failed_sealing'].includes(envelope.status)) {
     return <Message title="This document is no longer open for signing" body={`Ask ${senderName === 'you' ? 'the sender' : senderName} if you think this is a mistake.`} />;
   }
-  if (recipient.status === 'signed') {
+  const senderLine = recipient.is_sender ? 'You are signing your own document' : `Sent by ${senderName}`;
+  if (recipient.status === 'signed' || recipient.status === 'approved') {
+    const { count: stillWaiting } = await admin
+      .from('recipients')
+      .select('id', { count: 'exact', head: true })
+      .eq('envelope_id', envelope.id)
+      .in('role', ['signer', 'in_person', 'approver'])
+      .not('status', 'in', '(signed,approved)');
+    if ((stillWaiting ?? 0) > 0) {
+      return (
+        <Message
+          title={recipient.status === 'approved' ? 'Thank you. Your approval is recorded.' : 'Thank you. Your signature is recorded.'}
+          body="Other people still need to finish this document. When everyone has, the completed document will be available through this same link, and by email if the sender is using email."
+        />
+      );
+    }
     return (
-      <Message title="Thank you. Your signature is recorded." body="The final document is being prepared. This page will offer the download as soon as it is ready, usually within a minute.">
+      <Message title="Thank you. Everyone has finished." body="The final document is being prepared. This page will offer the download as soon as it is ready, usually within a minute.">
         <Finalising />
       </Message>
     );
   }
+  if (recipient.role === 'viewer') {
+    // a viewer reads; there is nothing to agree to or fill in
+    return <SigningRoom mode="view" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText="" />;
+  }
   if (recipient.status === 'sent' || recipient.status === 'viewed') {
     return (
       <div className="mx-auto max-w-2xl px-4 py-10">
-        <p className="text-sm text-ink-muted">{recipient.is_sender ? 'You are signing your own document' : `Sent by ${senderName}`}</p>
+        <p className="text-sm text-ink-muted">{senderLine}</p>
         <h1 className="mt-1 text-2xl font-medium text-ink">{envelope.title}</h1>
-        <h2 className="mt-8 text-lg font-medium text-ink">Before you start: signing electronically</h2>
+        <h2 className="mt-8 text-lg font-medium text-ink">Before you start: {recipient.role === 'approver' ? 'approving' : 'signing'} electronically</h2>
         <div className="mt-3 flex flex-col gap-3 text-base text-ink-body">
           {CONSENT_PARAGRAPHS.map((p) => (
             <p key={p}>{p}</p>
           ))}
         </div>
         <ConsentForm signerName={recipient.name} />
+        <p className="mt-6">
+          <DeclineControl variant="quiet" label="Decline this document instead" />
+        </p>
       </div>
     );
   }
   if (recipient.status !== 'consented') {
     return <Message title="Nothing is waiting for you here" body="There is no signing step left for you on this document." />;
+  }
+  if (recipient.role === 'approver') {
+    return <SigningRoom mode="approve" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText={APPROVE_TEXT} />;
   }
 
   const [{ data: fields }, { data: values }, { data: assets }] = await Promise.all([
@@ -116,7 +142,8 @@ async function Sign() {
   return (
     <SigningRoom
       title={envelope.title}
-      senderLine={recipient.is_sender ? 'You are signing your own document' : `Sent by ${senderName}`}
+      mode="sign"
+      senderLine={senderLine}
       signer={{ name: recipient.name, email: recipient.email }}
       fields={roomFields}
       adopted={{ signature: kinds.has('signature'), initials: kinds.has('initials') }}

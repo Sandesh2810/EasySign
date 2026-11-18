@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   if (error || !row) return json(404, { error: INVALID });
   // A valid link whose turn has not come: no session is created (the attempt is already in the audit trail).
   if (row.turn === 'waiting') {
-    return json(403, { error: 'It is not your turn yet. Other people sign this document before you; you will get an email when it is ready for you.' });
+    return json(403, { error: 'It is not your turn yet. Other people sign this document before you. You will be told when it is ready for you; this same link will work then.' });
   }
 
   const cookie = signSession(

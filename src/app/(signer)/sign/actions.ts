@@ -113,6 +113,29 @@ export async function adoptSignatureAction(formData: FormData): Promise<SignResu
   return { ok: true };
 }
 
+/** An approver's "yes". */
+export async function approveAction(): Promise<SignResult> {
+  const ctx = await loadSignerContext();
+  if (!ctx) return { ok: false, message: EXPIRED };
+  const { ip, ua } = await requestEvidence();
+  const { error } = await supabaseAdmin().rpc('signer_approve', { p_token_id: ctx.tokenId, p_ip: ip, p_user_agent: ua });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath('/sign');
+  return { ok: true };
+}
+
+/** Decline: stops the document for everyone and switches off every link, including this one. */
+export async function declineAction(reason: string): Promise<SignResult> {
+  const ctx = await loadSignerContext();
+  if (!ctx) return { ok: false, message: EXPIRED };
+  const text = z.string().max(1000).safeParse(reason ?? '');
+  if (!text.success) return { ok: false, message: 'Keep the reason under 1000 characters.' };
+  const { ip, ua } = await requestEvidence();
+  const { error } = await supabaseAdmin().rpc('signer_decline', { p_token_id: ctx.tokenId, p_reason: text.data, p_ip: ip, p_user_agent: ua });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  return { ok: true };
+}
+
 export async function completeAction(localDate: string): Promise<SignResult> {
   const ctx = await loadSignerContext();
   if (!ctx) return { ok: false, message: EXPIRED };

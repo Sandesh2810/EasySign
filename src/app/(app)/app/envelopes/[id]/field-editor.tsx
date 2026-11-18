@@ -9,6 +9,8 @@ import { saveFieldsAction } from '../actions';
 
 export interface EditorField {
   key: string;
+  /** the signer this field belongs to */
+  recipientId: string;
   type: FieldType;
   page: number;
   x: number;
@@ -27,17 +29,27 @@ interface PageInfo {
 interface Props {
   envelopeId: string;
   documentId: string;
-  recipient: { id: string; name: string } | null;
+  /** the people who sign, in turn order; each field belongs to one of them */
+  signers: { id: string; name: string }[];
   initialFields: EditorField[];
   readOnly: boolean;
 }
+
+/** One outline and tint per signer. Never colour alone: each field also carries the signer's name. */
+const TONES = [
+  { border: '#4e57b8', bg: '#c9cdf3' },
+  { border: '#8a5a00', bg: '#f6e3b4' },
+  { border: '#1f6f5c', bg: '#c4e8dd' },
+  { border: '#9b2f6e', bg: '#f1cfe3' },
+  { border: '#4a4a4a', bg: '#dcdcdc' },
+];
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 const MAX_WIDTH = 900;
 let nextKey = 0;
 const newKey = () => `f${Date.now().toString(36)}${(nextKey++).toString(36)}`;
 
-export function FieldEditor({ envelopeId, documentId, recipient, initialFields, readOnly }: Props) {
+export function FieldEditor({ envelopeId, documentId, signers, initialFields, readOnly }: Props) {
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fields, setFields] = useState<EditorField[]>(initialFields);
@@ -51,7 +63,10 @@ export function FieldEditor({ envelopeId, documentId, recipient, initialFields, 
   const pdfRef = useRef<unknown>(null);
   const history = useRef<{ past: EditorField[][]; future: EditorField[][] }>({ past: [], future: [] });
   const clipboard = useRef<EditorField | null>(null);
-  const canEdit = !readOnly && recipient !== null;
+  const [activeSigner, setActiveSigner] = useState<string | null>(signers[0]?.id ?? null);
+  const canEdit = !readOnly && signers.length > 0;
+  const signerName = (id: string) => signers.find((x) => x.id === id)?.name ?? 'Signer';
+  const toneOf = (id: string) => TONES[Math.max(0, signers.findIndex((x) => x.id === id)) % TONES.length];
 
   // ---- container width (re-render pages when it changes) ----
   useEffect(() => {
@@ -152,11 +167,11 @@ export function FieldEditor({ envelopeId, documentId, recipient, initialFields, 
 
   // ---- autosave ----
   useEffect(() => {
-    if (save !== 'dirty' || !recipient) return;
+    if (save !== 'dirty') return;
     const timer = setTimeout(async () => {
       setSave('saving');
       const snapshot = fields;
-      const payload = snapshot.map((f) => ({ document_id: documentId, recipient_id: recipient.id, type: f.type, page: f.page, x: f.x, y: f.y, w: f.w, h: f.h, required: f.required }));
+      const payload = snapshot.map((f) => ({ document_id: documentId, recipient_id: f.recipientId, type: f.type, page: f.page, x: f.x, y: f.y, w: f.w, h: f.h, required: f.required }));
       const res = await saveFieldsAction(envelopeId, payload).catch(() => ({ ok: false as const, message: 'Could not reach the server. Your changes are not saved yet.' }));
       setFields((current) => {
         // if the user kept editing while we saved, stay dirty so the newer layout is saved too
@@ -166,7 +181,7 @@ export function FieldEditor({ envelopeId, documentId, recipient, initialFields, 
       setSaveMessage(res.ok ? '' : res.message);
     }, 700);
     return () => clearTimeout(timer);
-  }, [save, fields, recipient, documentId, envelopeId]);
+  }, [save, fields, documentId, envelopeId]);
 
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
@@ -178,13 +193,13 @@ export function FieldEditor({ envelopeId, documentId, recipient, initialFields, 
 
   // ---- placing ----
   const placeAt = (pageIndex: number, e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canEdit || !tool || e.target !== e.currentTarget) return;
+    if (!canEdit || !tool || !activeSigner || e.target !== e.currentTarget) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const size = FIELD_DEFAULT_SIZE[tool];
     const w = size.w / pages[pageIndex].width;
     const h = size.h / pages[pageIndex].height;
     const r = clampRect({ x: (e.clientX - rect.left) / rect.width - w / 2, y: (e.clientY - rect.top) / rect.height - h / 2, w, h });
-    const f: EditorField = { key: newKey(), type: tool, page: pageIndex + 1, required: true, ...r };
+    const f: EditorField = { key: newKey(), recipientId: activeSigner, type: tool, page: pageIndex + 1, required: true, ...r };
     commit([...fields, f]);
     setSelected(f.key);
     setTool(null);
@@ -273,13 +288,31 @@ export function FieldEditor({ envelopeId, documentId, recipient, initialFields, 
       <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-[#c8c5bd] bg-white px-3 py-2">
         {readOnly ? (
           <p className="py-1 text-sm text-[#373330]">This document has been sent. Fields can no longer be changed.</p>
-        ) : !recipient ? (
-          <p className="py-1 text-sm text-[#373330]">Add the signer above, then place their fields on the document.</p>
+        ) : signers.length === 0 ? (
+          <p className="py-1 text-sm text-[#373330]">Add and save at least one person who signs (step 1), then place their fields on the document.</p>
         ) : (
           <>
             <span className="text-sm text-[#373330]" id="tool-hint">
-              {tool ? `Click on the page to place: ${FIELD_LABEL[tool]}` : `Fields for ${recipient.name}:`}
+              {tool ? `Click on the page to place: ${FIELD_LABEL[tool]}` : signers.length === 1 ? `Fields for ${signers[0].name}:` : 'Fields for'}
             </span>
+            {signers.length > 1 ? (
+              <select
+                aria-label="New fields are for this signer"
+                value={activeSigner ?? ''}
+                onChange={(e) => {
+                  setActiveSigner(e.target.value);
+                  setSelected(null);
+                }}
+                className="min-h-9 max-w-[14rem] rounded-md border-2 bg-white px-2 text-sm text-[#1a1818]"
+                style={{ borderColor: activeSigner ? toneOf(activeSigner).border : '#8a857d' }}
+              >
+                {signers.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             {FIELD_TYPES.map((t) => (
               <button
                 key={t}
@@ -300,6 +333,23 @@ export function FieldEditor({ envelopeId, documentId, recipient, initialFields, 
             </button>
             {sel ? (
               <>
+                {signers.length > 1 ? (
+                  <label className="flex items-center gap-1 text-sm text-[#373330]">
+                    Belongs to
+                    <select
+                      value={sel.recipientId}
+                      onChange={(e) => commit(fields.map((x) => (x.key === sel.key ? { ...x, recipientId: e.target.value } : x)))}
+                      className="min-h-9 max-w-[12rem] rounded-md border-2 bg-white px-2 text-sm text-[#1a1818]"
+                      style={{ borderColor: toneOf(sel.recipientId).border }}
+                    >
+                      {signers.map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <button type="button" onClick={() => duplicate(sel)} className="min-h-9 rounded-md border border-[#8a857d] px-3 text-sm text-[#1a1818]">
                   Duplicate
                 </button>
@@ -355,15 +405,18 @@ export function FieldEditor({ envelopeId, documentId, recipient, initialFields, 
                       key={f.key}
                       role="button"
                       tabIndex={0}
-                      aria-label={`${FIELD_LABEL[f.type]} field${recipient ? ` for ${recipient.name}` : ''} on page ${f.page}. Arrow keys move it, Delete removes it.`}
+                      aria-label={`${FIELD_LABEL[f.type]} field for ${signerName(f.recipientId)} on page ${f.page}. Arrow keys move it, Delete removes it.`}
                       aria-pressed={isSel}
                       onPointerDown={onPointerDown(f, 'move')}
                       onKeyDown={onFieldKey(f)}
                       onFocus={() => setSelected(f.key)}
-                      className={`absolute flex items-center overflow-hidden border-2 border-dashed px-1 text-[11px] font-medium leading-tight text-[#1d2044] ${isSel ? 'border-[#1d2044] bg-[#c9cdf3]/80 outline outline-2 outline-offset-1 outline-[#4e57b8]' : 'border-[#4e57b8] bg-[#c9cdf3]/55'}`}
-                      style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%`, cursor: canEdit ? 'move' : 'default', touchAction: 'none' }}
+                      className={`absolute flex items-center overflow-hidden border-2 border-dashed px-1 text-[11px] font-medium leading-tight text-[#1a1818] ${isSel ? 'outline outline-2 outline-offset-1 outline-[#1a1818]' : ''}`}
+                      style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%`, cursor: canEdit ? 'move' : 'default', touchAction: 'none', borderColor: toneOf(f.recipientId).border, backgroundColor: `${toneOf(f.recipientId).bg}${isSel ? 'dd' : '99'}` }}
                     >
-                      <span className="truncate">{FIELD_LABEL[f.type]}</span>
+                      <span className="truncate">
+                        {FIELD_LABEL[f.type]}
+                        {signers.length > 1 ? ` · ${signerName(f.recipientId)}` : ''}
+                      </span>
                       {isSel && canEdit ? (
                         <span
                           onPointerDown={onPointerDown(f, 'resize')}

@@ -28,7 +28,7 @@ async function must<T>(q: PromiseLike<{ data: T; error: { message: string } | nu
 async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: string }> {
   const db = supabaseAdmin();
   const id = job.envelope_id;
-  const envelope = await must(db.from('envelopes').select('id, org_id, title, public_code, sender_id').eq('id', id).maybeSingle(), 'the envelope');
+  const envelope = await must(db.from('envelopes').select('id, org_id, title, public_code, sender_id, delivery').eq('id', id).maybeSingle(), 'the envelope');
   const doc = await must(db.from('envelope_documents').select('storage_backend, storage_path, sha256').eq('envelope_id', id).order('position').limit(1).maybeSingle(), 'the document');
   const recipients = await must(db.from('recipients').select('id, name, email, role, routing_order, auth_method, sent_at, viewed_at, consented_at, completed_at').eq('envelope_id', id).order('routing_order'), 'the recipients');
   const fields = await must(db.from('fields').select('id, recipient_id, type, page, x, y, w, h').eq('envelope_id', id), 'the fields');
@@ -101,6 +101,7 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
         verifyUrl: `${env.appUrl()}/verify?code=${envelope.public_code}`,
         completedAtUtc: new Date(Math.max(...finished)),
         sender: { name: (profile.display_name as string) || sender.data.user.email, email: sender.data.user.email },
+        delivery: envelope.delivery === 'link' ? 'link' : 'email',
       },
       recipients: sealRecipients,
       fields: sealFields,

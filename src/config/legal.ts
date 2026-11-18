@@ -16,5 +16,7 @@ export const CONSENT_PARAGRAPHS: readonly string[] = [
 
 export const CONSENT_TEXT = CONSENT_PARAGRAPHS.join('\n\n');
 
+export const APPROVE_TEXT = 'By selecting Approve, I confirm that I have read the document and that I approve it going ahead.';
+
 export const INTENT_TEXT =
   'By selecting Adopt and Sign, I confirm that the signature and initials shown are mine, that I have read the document, and that I intend to sign it electronically.';

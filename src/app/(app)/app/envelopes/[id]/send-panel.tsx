@@ -2,7 +2,9 @@
 // Step 3 on the document page: send the document, then (while it is open) fetch the signing link on request.
 import { useActionState, useState, useTransition } from 'react';
 import { Button, Notice } from '@/components/ui';
-import { getSigningLinkAction, sendEnvelopeAction, type ActionResult } from '../actions';
+import { progressLabel, ROLE_LABEL } from '@/lib/recipient-labels';
+import type { RecipientStatus, Role } from '@/lib/routing';
+import { getSigningLinkAction, sendEnvelopeAction, type ActionResult, type RevealedLink } from '../actions';
 
 export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: string; selfSign: boolean; hasSigner: boolean }) {
   const [state, action, pending] = useActionState<ActionResult | null, FormData>(sendEnvelopeAction, null);
@@ -12,7 +14,7 @@ export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: str
       <p className="text-sm text-ink-body">
         {selfSign
           ? 'You are the signer. Nothing is emailed: you sign straight away in this browser.'
-          : 'Once sent, the document, the signer and the fields are locked and cannot be edited.'}
+          : 'Once sent, the document, the people and the fields are locked and cannot be edited. Each person is asked when their turn comes.'}
       </p>
       {state && !state.ok ? <Notice tone="danger">{state.message}</Notice> : null}
       <div className="flex flex-wrap gap-2">
@@ -31,13 +33,13 @@ export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: str
           </>
         )}
       </div>
-      {!hasSigner ? <p className="text-sm text-ink-muted">Save the signer first (step 1).</p> : null}
+      {!hasSigner ? <p className="text-sm text-ink-muted">Save at least one person who signs first (step 1).</p> : null}
     </form>
   );
 }
 
 export function SigningLinkPanel({ envelopeId, selfSign }: { envelopeId: string; selfSign: boolean }) {
-  const [links, setLinks] = useState<{ name: string; link: string }[] | null>(null);
+  const [links, setLinks] = useState<RevealedLink[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -64,24 +66,30 @@ export function SigningLinkPanel({ envelopeId, selfSign }: { envelopeId: string;
       <p className="text-sm text-ink-body">
         {selfSign
           ? 'Open your signing page to finish this document.'
-          : 'Anyone who has this link can sign as this person. Share it only with the signer.'}
+          : 'Anyone who has a link can act as that person. Give each link only to the person it is for. A link opens only when that person\'s turn has come. Showing the links is recorded in the audit trail.'}
       </p>
       {error ? <Notice tone="danger">{error}</Notice> : null}
       {links === null ? (
         <div>
           <Button type="button" variant={selfSign ? 'primary' : 'outline'} onClick={load} disabled={pending}>
-            {pending ? 'Preparing…' : selfSign ? 'Show my signing link' : 'Show signing link'}
+            {pending ? 'Preparing…' : selfSign ? 'Show my signing link' : 'Show signing links'}
           </Button>
         </div>
       ) : (
         <ul className="flex flex-col gap-3">
           {links.map((l) => (
             <li key={l.link} className="flex flex-col gap-2">
-              <label htmlFor={`link-${l.name}`} className="text-sm font-medium text-ink">
+              <label htmlFor={`link-${l.order}-${l.name}`} className="text-sm font-medium text-ink">
                 Link for {l.name}
+                {selfSign ? null : (
+                  <span className="font-normal text-ink-muted">
+                    {' '}
+                    · {ROLE_LABEL[l.role as Role]} · turn {l.order} · {progressLabel(l.role as Role, l.status as RecipientStatus)}
+                  </span>
+                )}
               </label>
               <input
-                id={`link-${l.name}`}
+                id={`link-${l.order}-${l.name}`}
                 readOnly
                 value={l.link}
                 onFocus={(e) => e.currentTarget.select()}

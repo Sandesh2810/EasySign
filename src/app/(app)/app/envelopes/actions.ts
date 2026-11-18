@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { fieldsSchema } from '@/lib/fields';
 import { friendlyDbError } from '@/lib/request-guard';
+import { assignOrders, MAX_RECIPIENTS, validateRouting } from '@/lib/routing';
 import { mintTokenRecord, signingLink } from '@/lib/signing/links';
 import { requireUser } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
@@ -14,37 +15,60 @@ import type { Backend } from '@/storage/types';
 
 export type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
 
-const recipientSchema = z.object({
-  envelope_id: z.uuid(),
-  name: z.string().trim().min(1, 'Enter the signer\'s name.').max(120),
-  email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address.')),
+const recipientsSchema = z.object({
+  mode: z.enum(['sequential', 'parallel', 'mixed']),
+  recipients: z
+    .array(
+      z.object({
+        id: z.uuid().nullable(),
+        name: z.string().trim().min(1, 'Enter a name for every person.').max(120, 'Names can be up to 120 characters.'),
+        email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address for every person.')),
+        role: z.enum(['signer', 'approver', 'viewer', 'cc']),
+        order: z.number().int().min(1).max(99),
+      }),
+    )
+    .min(1, 'Add at least one person who signs.')
+    .max(MAX_RECIPIENTS, `A document can have up to ${MAX_RECIPIENTS} people.`),
 });
 
-/** Phase 1: one signer per document. "Sign it myself" fills in the sender's own details. */
-export async function saveRecipientAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
+/**
+ * Save everyone involved in a draft, in list order, together with how they take turns (D-52).
+ * For "one after another" and "all at once" the turn numbers are worked out here from the list order;
+ * for "custom order" the numbers the sender typed are used.
+ */
+export async function saveRecipientsAction(envelopeId: string, input: unknown): Promise<ActionResult> {
   const user = await requireUser();
-  const self = formData.get('self') === '1';
-  const admin = supabaseAdmin();
-  let name = formData.get('name');
-  let email = formData.get('email');
-  if (self) {
-    const profile = await admin.from('profiles').select('display_name').eq('id', user.id).maybeSingle();
-    name = profile.data?.display_name || 'Me';
-    email = user.email ?? '';
-  }
-  const parsed = recipientSchema.safeParse({ envelope_id: formData.get('envelope_id'), name, email });
-  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Check the signer\'s details.' };
-  const isSender = self || parsed.data.email === (user.email ?? '').toLowerCase();
+  const id = z.uuid().safeParse(envelopeId);
+  const parsed = recipientsSchema.safeParse(input);
+  if (!id.success) return { ok: false, message: 'Document not found.' };
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Check the list of people.' };
+  const { mode, recipients } = parsed.data;
 
-  const existing = await admin.from('recipients').select('id').eq('envelope_id', parsed.data.envelope_id).order('routing_order').limit(1).maybeSingle();
+  const orders = mode === 'mixed' ? recipients.map((r) => r.order) : assignOrders(mode, recipients.map((r) => r.role));
+  const verdict = validateRouting(recipients.map((r, i) => ({ id: String(i), role: r.role, order: orders[i], status: 'created' as const })), mode);
+  if (!verdict.ok) return { ok: false, message: verdict.message };
+  const seen = new Set<string>();
+  for (const r of recipients) {
+    const key = `${r.email}|${r.role}`;
+    if (seen.has(key)) return { ok: false, message: `${r.email} is listed twice with the same role. Remove one of them.` };
+    seen.add(key);
+  }
+
+  const me = (user.email ?? '').toLowerCase();
+  const admin = supabaseAdmin();
+  const routing = await admin.rpc('set_routing_mode', { p_actor: user.id, p_envelope_id: id.data, p_mode: mode });
+  if (routing.error) return { ok: false, message: friendlyDbError(routing.error.message).message };
   const { error } = await admin.rpc('save_recipients', {
     p_actor: user.id,
-    p_envelope_id: parsed.data.envelope_id,
-    p_recipients: [{ id: existing.data?.id ?? null, name: parsed.data.name, email: parsed.data.email, role: 'signer', routing_order: 1, is_sender: isSender }],
+    p_envelope_id: id.data,
+    p_recipients: recipients.map((r, i) => ({ id: r.id, name: r.name, email: r.email, role: r.role, routing_order: orders[i], is_sender: r.email === me })),
   });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
-  revalidatePath(`/app/envelopes/${parsed.data.envelope_id}`);
-  return { ok: true, message: 'Signer saved.' };
+  if (error) {
+    const friendly = friendlyDbError(error.message);
+    return { ok: false, message: /recipients_unique_email/.test(error.message) ? 'The same email address is listed twice with the same role.' : friendly.message };
+  }
+  revalidatePath(`/app/envelopes/${id.data}`);
+  return { ok: true, message: 'Saved.' };
 }
 
 /** Autosave from the field editor. The whole layout is sent each time; the database replaces it atomically. */
