@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { requireUser } from '@/lib/auth/session';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { Notice } from '@/components/ui';
@@ -8,7 +9,15 @@ export const metadata: Metadata = { title: 'Dashboard' };
 
 // First signed-in screen. Reads only through the user's own session, so row-level security decides
 // what is visible. The envelope list, folders and email meter arrive with the next slices.
-export default async function DashboardPage() {
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<p className="text-ink-muted">Loading your dashboard…</p>}>
+      <Dashboard />
+    </Suspense>
+  );
+}
+
+async function Dashboard() {
   const user = await requireUser('/app');
   const supabase = await createSupabaseServerClient();
   const [{ data: profile }, { data: controls }, { data: memberships }, { count: envelopeCount }] = await Promise.all([

@@ -252,6 +252,43 @@ begin
   if v.total = 100000 and v.uniq = 100000 and v.bad = 0 then res := res || E'PASS T35 100,000 database-generated codes: all well-formed, zero collisions\n';
   else res := res || 'FAIL T35 codes :: total=' || v.total || ' unique=' || v.uniq || ' malformed=' || v.bad || E'\n'; end if;
 
+  -- ---------- bootstrap administrator (migration 5) ----------
+  declare
+    c uuid := gen_random_uuid();
+  begin
+    update public.platform_settings set value = '"rls-admin@example.test"' where key = 'bootstrap_admin_email';
+    if not found then insert into public.platform_settings (key, value) values ('bootstrap_admin_email', '"rls-admin@example.test"'); end if;
+    insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+      values (c, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'RLS-Admin@example.test', null, '{"provider":"email"}', '{}', now(), now());
+    if exists (select 1 from public.account_controls k where k.user_id = c and (k.is_platform_admin or k.approved)) then
+      res := res || E'FAIL T37 admin rights granted before the email was confirmed\n';
+    else
+      update auth.users set email_confirmed_at = now() where id = c;
+      update auth.users set email_confirmed_at = now() where id = a; -- an ordinary user confirming must gain nothing
+      if exists (select 1 from public.account_controls k where k.user_id = c and k.is_platform_admin and k.approved and k.trust_level = 'trusted')
+         and not exists (select 1 from public.account_controls k where k.user_id = a and (k.is_platform_admin or k.approved))
+      then res := res || E'PASS T37 the named administrator is promoted only once their email is confirmed; other users gain nothing\n';
+      else res := res || E'FAIL T37 bootstrap admin promotion\n'; end if;
+    end if;
+  end;
+
+  -- ---------- rate limiter (migration 5) ----------
+  execute 'set local role service_role';
+  n := 0;
+  for i in 1..5 loop
+    if public.rate_limit_hit('test_bucket', 'key-1', 3, 3600) then n := n + 1; end if;
+  end loop;
+  if n = 3 and public.rate_limit_hit('test_bucket', 'key-2', 3, 3600) then res := res || E'PASS T38 rate limiter allows 3 of 5 calls for one key and keeps other keys separate\n';
+  else res := res || 'FAIL T38 rate limiter :: allowed ' || n || E'\n'; end if;
+  execute 'set local role authenticated';
+  begin perform public.rate_limit_hit('test_bucket', 'key-1', 3, 3600);
+    res := res || E'FAIL T39 a signed-in user called the rate limiter\n';
+  exception when insufficient_privilege then res := res || E'PASS T39 the rate limiter is server-only\n'; end;
+  execute 'reset role';
+  if exists (select 1 from public.rate_limits r where r.bucket = 'test_bucket' and position('key-1' in encode(r.key_hash, 'escape')) > 0)
+  then res := res || E'FAIL T40 rate-limit key stored in clear\n';
+  else res := res || E'PASS T40 rate-limit keys are stored only as hashes\n'; end if;
+
   -- five sample codes for the Node cross-check (same check algorithm on both sides)
   select string_agg(app_private.gen_public_code(), ',') into t from generate_series(1, 5);
   res := res || 'INFO sample codes: ' || t || E'\n';

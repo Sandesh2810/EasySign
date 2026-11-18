@@ -9,6 +9,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { env } from '@/lib/env';
 import { safeNext } from '@/lib/safe-redirect';
+import { allow, clientIp, LIMITS_AUTH, TOO_MANY } from '@/lib/rate-limit';
 import { getMailProvider } from '@/mail';
 import { verifyEmailTemplate } from '@/mail/templates';
 import { NOTIFY_MODE } from '@/config/brand';
@@ -32,6 +33,9 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Check the form and try again.' };
   const { name, email: address, password } = parsed.data;
 
+  const ip = await clientIp();
+  if (!(await allow(LIMITS_AUTH.signupPerIp, ip)) || !(await allow(LIMITS_AUTH.signupPerEmail, address))) return { ok: false, message: TOO_MANY };
+
   const { data, error } = await supabaseAdmin().auth.admin.generateLink({
     type: 'signup',
     email: address,
@@ -50,6 +54,8 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
 export async function signInAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = signInSchema.safeParse({ email: formData.get('email'), password: formData.get('password') });
   if (!parsed.success) return { ok: false, message: 'Enter your email and password.' };
+  const ip = await clientIp();
+  if (!(await allow(LIMITS_AUTH.signinPerIp, ip)) || !(await allow(LIMITS_AUTH.signinPerAccount, `${parsed.data.email}|${ip}`))) return { ok: false, message: TOO_MANY };
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) return { ok: false, message: 'That email and password do not match, or the email has not been confirmed yet.' };
@@ -62,6 +68,7 @@ const confirmSchema = z.object({ token_hash: z.string().min(10).max(200), type: 
 export async function confirmEmailAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = confirmSchema.safeParse({ token_hash: formData.get('token_hash'), type: formData.get('type') });
   if (!parsed.success) return { ok: false, message: 'This confirmation link is not valid. Request a new one by signing up again.' };
+  if (!(await allow(LIMITS_AUTH.confirmPerIp, await clientIp()))) return { ok: false, message: TOO_MANY };
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.auth.verifyOtp(parsed.data);
   if (error) return { ok: false, message: 'This confirmation link has expired or was already used. Sign in, or sign up again to get a new one.' };

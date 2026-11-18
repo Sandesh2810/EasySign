@@ -5,6 +5,10 @@ import { requireUser } from '@/lib/auth/session';
 import { Button } from '@/components/ui';
 import { signOutAction } from '../(auth)/actions';
 
+// Pages under /app depend on who is signed in, so they are rendered for each request rather than
+// prepared ahead of the click; this tells Next.js not to flag that as a missed optimisation.
+export const instant = false;
+
 // Everything under /app requires a signed-in user. The session is read at request time, so it
 // sits behind a Suspense boundary (required with Cache Components); the frame renders instantly.
 async function AccountMenu() {
