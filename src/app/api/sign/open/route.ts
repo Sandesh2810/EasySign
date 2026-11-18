@@ -8,7 +8,7 @@ import { env } from '@/lib/env';
 import { allow, clientIp, TOO_MANY } from '@/lib/rate-limit';
 import { isSameOrigin, json } from '@/lib/request-guard';
 import { hashToken, signSession } from '@/lib/signer-token';
-import { requestEvidence, SIGNER_COOKIE, signerCookieOptions, SIGNER_SESSION_TTL_SECONDS } from '@/lib/signing/session';
+import { requestEvidence, signerCookieName, signerCookieOptions, SIGNER_SESSION_TTL_SECONDS } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 const INVALID = 'This signing link is not valid, or it has expired. Ask the sender for a new one.';
@@ -36,6 +36,6 @@ export async function POST(request: NextRequest) {
     { ttlSeconds: SIGNER_SESSION_TTL_SECONDS },
   );
   const res = NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
-  res.cookies.set(SIGNER_COOKIE, cookie, signerCookieOptions());
+  res.cookies.set(signerCookieName(), cookie, signerCookieOptions());
   return res;
 }

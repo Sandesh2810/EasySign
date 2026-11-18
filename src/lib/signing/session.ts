@@ -10,7 +10,12 @@ import { clientIp, userAgent } from '@/lib/rate-limit';
 import { verifySession, type SessionClaims } from '@/lib/signer-token';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
-export const SIGNER_COOKIE = 'es_signer';
+/**
+ * On https the cookie carries the "__Host-" prefix: browsers then accept it only from this exact
+ * host, over https, with no Domain attribute. That matters on a shared free suffix (D-48), where a
+ * stranger's site under the same suffix could otherwise plant a cookie with our name.
+ */
+export const signerCookieName = () => (env.appUrl().startsWith('https://') ? '__Host-es_signer' : 'es_signer');
 export const SIGNER_SESSION_TTL_SECONDS = 2 * 3600;
 
 export const signerCookieOptions = () => ({
@@ -23,7 +28,7 @@ export const signerCookieOptions = () => ({
 
 export async function readSignerClaims(): Promise<SessionClaims | null> {
   await connection(); // always per-request: never prerendered or cached
-  const raw = (await cookies()).get(SIGNER_COOKIE)?.value;
+  const raw = (await cookies()).get(signerCookieName())?.value;
   if (!raw) return null;
   const check = verifySession(raw, env.sessionCookieKey());
   return check.ok ? check.claims : null;
