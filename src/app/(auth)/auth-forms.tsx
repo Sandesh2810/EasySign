@@ -6,6 +6,13 @@ import { Button, Notice, TextField } from '@/components/ui';
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { confirmEmailAction, signInAction, signUpAction, type FormState } from './actions';
 
+// A provider button is shown only once that provider has really been set up for this deployment
+// (NEXT_PUBLIC_AUTH_GOOGLE=1 / NEXT_PUBLIC_AUTH_MICROSOFT=1 in the env file). A button that cannot work is not shown.
+const PROVIDERS = {
+  google: process.env.NEXT_PUBLIC_AUTH_GOOGLE === '1',
+  azure: process.env.NEXT_PUBLIC_AUTH_MICROSOFT === '1',
+};
+
 function OAuthButtons({ next }: { next: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,16 +31,24 @@ function OAuthButtons({ next }: { next: string }) {
       setBusy(null);
     }
   };
+  if (!PROVIDERS.google && !PROVIDERS.azure) return null;
   return (
-    <div className="flex flex-col gap-3">
-      <Button type="button" variant="outline" onClick={() => start('google')} disabled={busy !== null}>
-        {busy === 'google' ? 'Opening Google…' : 'Continue with Google'}
-      </Button>
-      <Button type="button" variant="outline" onClick={() => start('azure')} disabled={busy !== null}>
-        {busy === 'azure' ? 'Opening Microsoft…' : 'Continue with Microsoft'}
-      </Button>
-      {error ? <Notice tone="danger">{error}</Notice> : null}
-    </div>
+    <>
+      <div className="flex flex-col gap-3">
+        {PROVIDERS.google ? (
+          <Button type="button" variant="outline" onClick={() => start('google')} disabled={busy !== null}>
+            {busy === 'google' ? 'Opening Google…' : 'Continue with Google'}
+          </Button>
+        ) : null}
+        {PROVIDERS.azure ? (
+          <Button type="button" variant="outline" onClick={() => start('azure')} disabled={busy !== null}>
+            {busy === 'azure' ? 'Opening Microsoft…' : 'Continue with Microsoft'}
+          </Button>
+        ) : null}
+        {error ? <Notice tone="danger">{error}</Notice> : null}
+      </div>
+      <Divider />
+    </>
   );
 }
 
@@ -58,7 +73,6 @@ export function LoginForm() {
         </div>
       ) : null}
       <OAuthButtons next={next} />
-      <Divider />
       <form action={action} className="flex flex-col gap-4">
         <input type="hidden" name="next" value={next} />
         <TextField id="email" name="email" type="email" label="Email" autoComplete="email" required />
@@ -102,7 +116,6 @@ export function SignupForm() {
     <>
       <h1 className="mb-6 text-2xl font-medium text-ink">Create your account</h1>
       <OAuthButtons next="/app" />
-      <Divider />
       <form action={action} className="flex flex-col gap-4">
         <TextField id="name" name="name" label="Your name" autoComplete="name" required maxLength={100} />
         <TextField id="email" name="email" type="email" label="Email" autoComplete="email" required />
