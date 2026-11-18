@@ -12,6 +12,8 @@ declare
   n int; t text; v record;
   procedure_dummy int;
   e4 uuid;
+  e5 uuid;
+  e6 uuid;
   d_today text := to_char((now() at time zone 'UTC')::date, 'YYYY-MM-DD');
 begin
   -- ---------- setup as the migration role ----------
@@ -430,6 +432,158 @@ begin
     update public.account_controls set approved = false where user_id = a;
   end;
 
+  -- ---------- several recipients: turns, approval, decline (migration 10, D-52), as the service role ----------
+  declare
+    d5 uuid; d6 uuid; exp timestamptz := now() + interval '30 days'; cnt int; st text; row5 record; job5 record; ok boolean; code5 text; toks jsonb;
+    boss uuid; ccx uuid; s1 uuid; s2 uuid; vw uuid; s3 uuid; x1 uuid; x2 uuid;
+    t_boss uuid := gen_random_uuid(); t_s1 uuid := gen_random_uuid(); t_s2 uuid := gen_random_uuid(); t_vw uuid := gen_random_uuid(); t_s3 uuid := gen_random_uuid();
+    t_x1 uuid := gen_random_uuid(); t_x2 uuid := gen_random_uuid();
+    h_boss text := repeat('b1', 32); h_s1 text := repeat('b2', 32); h_s2 text := repeat('b3', 32); h_vw text := repeat('b4', 32); h_s3 text := repeat('b5', 32);
+    h_x1 text := repeat('b6', 32); h_x2 text := repeat('b7', 32);
+  begin
+    update public.account_controls set approved = true, daily_recipient_cap = 50, daily_envelope_cap = 50 where user_id = a;
+    select e.id, e.public_code into e5, code5 from public.create_envelope(a, org_a, 'Routing test', folder_a) e;
+    select d.id into d5 from public.add_envelope_document(a, e5, 'f.pdf', 'supabase', org_a || '/' || e5 || '/d1', repeat('ab', 32), 1, 900, '[]', 'pdf') d;
+    perform public.save_recipients(a, e5, '[
+      {"name":"Boss","email":"boss@example.test","role":"approver","routing_order":1},
+      {"name":"Copy","email":"copy@example.test","role":"cc","routing_order":1},
+      {"name":"S One","email":"s1@example.test","role":"signer","routing_order":2},
+      {"name":"S Two","email":"s2@example.test","role":"signer","routing_order":2},
+      {"name":"Viewer","email":"view@example.test","role":"viewer","routing_order":2},
+      {"name":"S Three","email":"s3@example.test","role":"signer","routing_order":3}]');
+    select x.id into boss from public.recipients x where x.envelope_id = e5 and x.email = 'boss@example.test';
+    select x.id into ccx from public.recipients x where x.envelope_id = e5 and x.email = 'copy@example.test';
+    select x.id into s1 from public.recipients x where x.envelope_id = e5 and x.email = 's1@example.test';
+    select x.id into s2 from public.recipients x where x.envelope_id = e5 and x.email = 's2@example.test';
+    select x.id into vw from public.recipients x where x.envelope_id = e5 and x.email = 'view@example.test';
+    select x.id into s3 from public.recipients x where x.envelope_id = e5 and x.email = 's3@example.test';
+    perform public.save_fields(a, e5, jsonb_build_array(
+      jsonb_build_object('document_id', d5, 'recipient_id', s1, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.5, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d5, 'recipient_id', s2, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.6, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d5, 'recipient_id', s3, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.7, 'w', 0.3, 'h', 0.07)));
+    toks := jsonb_build_array(
+      jsonb_build_object('recipient_id', boss, 'token_id', t_boss, 'nonce', repeat('01', 16), 'token_sha256', h_boss),
+      jsonb_build_object('recipient_id', s1, 'token_id', t_s1, 'nonce', repeat('02', 16), 'token_sha256', h_s1),
+      jsonb_build_object('recipient_id', s2, 'token_id', t_s2, 'nonce', repeat('03', 16), 'token_sha256', h_s2),
+      jsonb_build_object('recipient_id', vw, 'token_id', t_vw, 'nonce', repeat('04', 16), 'token_sha256', h_vw),
+      jsonb_build_object('recipient_id', s3, 'token_id', t_s3, 'nonce', repeat('05', 16), 'token_sha256', h_s3));
+
+    n := 0;
+    begin perform public.send_envelope(a, e5, toks, exp, 'email'); n := n + 1; exception when invalid_parameter_value then null; end; -- two signers share a place, mode is "one after another"
+    begin perform public.set_routing_mode(b, e5, 'mixed'); n := n + 1; exception when insufficient_privilege then null; end;           -- not a member
+    perform public.set_routing_mode(a, e5, 'mixed');
+    begin perform public.send_envelope(a, e5, toks - 4, exp, 'email'); n := n + 1; exception when invalid_parameter_value then null; end; -- one link record missing
+    if n = 0 and (select e.status from public.envelopes e where e.id = e5) = 'draft'
+    then res := res || E'PASS T83 send refuses a tie in "one after another" and a missing link record; only a member can change the routing\n';
+    else res := res || 'FAIL T83 routing validation :: ' || n || E'\n'; end if;
+
+    perform public.send_envelope(a, e5, toks, exp, 'email');
+    select count(*) into cnt from public.notification_outbox o where o.envelope_id = e5;
+    if cnt = 1 and exists (select 1 from public.notification_outbox o where o.envelope_id = e5 and o.kind = 'approval_request' and o.recipient_id = boss and o.priority = 'P0_REQUEST')
+       and (select x.status from public.recipients x where x.id = boss) = 'sent'
+       and (select count(*) from public.recipients x where x.envelope_id = e5 and x.id <> boss and x.status = 'created') = 5
+       and (select count(*) from public.recipient_tokens k where k.envelope_id = e5) = 5
+       and not exists (select 1 from public.recipient_tokens k where k.recipient_id = ccx)
+    then res := res || E'PASS T84 AT2.1: on send only the first turn is contacted; later turns wait and a copy-only recipient gets no link\n';
+    else res := res || 'FAIL T84 first turn :: outbox=' || cnt || E'\n'; end if;
+
+    select * into row5 from public.signer_open(h_s1, '203.0.113.9', 'ua');
+    n := 0;
+    begin perform public.signer_consent(t_s1, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_complete(t_s1, repeat('d1', 32), d_today, null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_decline(t_s1, 'no', null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    if row5.turn = 'waiting' and n = 0 and (select x.status from public.recipients x where x.id = s1) = 'created'
+       and (select e.status from public.envelopes e where e.id = e5) = 'sent'
+       and exists (select 1 from public.audit_events x where x.envelope_id = e5 and x.recipient_id = s1 and x.event_type = 'out_of_turn')
+    then res := res || E'PASS T85 AT2.1: a valid link used before its turn opens nothing, changes nothing, and is recorded\n';
+    else res := res || 'FAIL T85 out of turn :: turn=' || coalesce(row5.turn, 'null') || ' n=' || n || E'\n'; end if;
+
+    select * into row5 from public.signer_open(h_boss, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_boss, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    n := 0;
+    begin perform public.signer_complete(t_boss, repeat('d1', 32), d_today, null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    st := public.signer_approve(t_boss, '203.0.113.9', 'ua');
+    if row5.turn = 'now' and n = 0 and st = 'waiting' and (select x.status from public.recipients x where x.id = boss) = 'approved'
+       and (select count(*) from public.recipients x where x.id in (s1, s2, vw) and x.status = 'sent') = 3
+       and (select x.status from public.recipients x where x.id = s3) = 'created'
+       and (select x.status from public.recipients x where x.id = ccx) = 'created'
+       and (select count(*) from public.notification_outbox o where o.envelope_id = e5 and o.kind = 'signature_request' and o.recipient_id in (s1, s2)) = 2
+       and exists (select 1 from public.notification_outbox o where o.envelope_id = e5 and o.kind = 'view_notice' and o.recipient_id = vw and o.priority = 'P2')
+       and not exists (select 1 from public.notification_outbox o where o.envelope_id = e5 and o.recipient_id in (ccx, s3))
+    then res := res || E'PASS T86 AT2.1: approver gate. The approver cannot sign, approves, and only then is the next turn (and its viewer) contacted\n';
+    else res := res || 'FAIL T86 approver :: ' || coalesce(st, 'null') || ' n=' || n || E'\n'; end if;
+
+    select * into row5 from public.signer_open(h_vw, '203.0.113.9', 'ua');
+    n := 0;
+    begin perform public.signer_consent(t_vw, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_approve(t_s2, null, null); n := n + 1; exception when insufficient_privilege then null; end; -- a signer cannot "approve"
+    perform public.signer_open(h_s2, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_s2, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_s2, 'signature', 'drawn', 'supabase', org_a || '/' || e5 || '/sig-s2.png', repeat('5b', 32), null, null, '203.0.113.9', 'ua');
+    st := public.signer_complete(t_s2, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+    if row5.turn = 'view' and n = 0 and st = 'waiting' and (select x.status from public.recipients x where x.id = vw) = 'viewed'
+       and (select x.status from public.recipients x where x.id = s3) = 'created'
+       and not exists (select 1 from public.seal_jobs j where j.envelope_id = e5)
+    then
+      perform public.signer_open(h_s1, '203.0.113.9', 'ua');
+      perform public.signer_consent(t_s1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+      perform public.signer_adopt_signature(t_s1, 'signature', 'typed', 'supabase', org_a || '/' || e5 || '/sig-s1.png', repeat('5c', 32), 'S One', 'browser-script', '203.0.113.9', 'ua');
+      st := public.signer_complete(t_s1, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+      if st = 'waiting' and (select x.status from public.recipients x where x.id = s3) = 'sent'
+         and (select v2.signature_id from public.field_values v2 join public.fields f on f.id = v2.field_id where f.recipient_id = s2) = code5 || '-S1'
+         and (select v2.signature_id from public.field_values v2 join public.fields f on f.id = v2.field_id where f.recipient_id = s1) = code5 || '-S2'
+         and exists (select 1 from public.notification_outbox o where o.envelope_id = e5 and o.kind = 'signature_request' and o.recipient_id = s3)
+      then res := res || E'PASS T87 AT2.1: people in the same turn act in any order; the next turn starts only when all have finished; a viewer reads but cannot act\n';
+      else res := res || 'FAIL T87 second half :: ' || coalesce(st, 'null') || E'\n'; end if;
+    else res := res || 'FAIL T87 first half :: turn=' || coalesce(row5.turn, 'null') || ' st=' || coalesce(st, 'null') || ' n=' || n || E'\n'; end if;
+
+    perform public.signer_open(h_s3, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_s3, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_s3, 'signature', 'drawn', 'supabase', org_a || '/' || e5 || '/sig-s3.png', repeat('5d', 32), null, null, '203.0.113.9', 'ua');
+    st := public.signer_complete(t_s3, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+    select count(*) into cnt from public.seal_jobs j where j.envelope_id = e5 and j.status = 'queued';
+    select * into job5 from public.claim_seal_job(300);
+    ok := public.complete_seal_job(e5, job5.attempt_id, repeat('e1', 32), repeat('e2', 32), 'supabase', org_a || '/' || e5 || '/sealed.pdf', org_a || '/' || e5 || '/certificate.pdf', job5.audit_seq, job5.audit_hash);
+    if st = 'sealing' and cnt = 1 and job5.envelope_id = e5 and ok and (select e.status from public.envelopes e where e.id = e5) = 'completed'
+       and (select count(*) from public.notification_outbox o where o.envelope_id = e5 and o.kind = 'completion_copy') = 6
+       and exists (select 1 from public.notification_outbox o where o.envelope_id = e5 and o.kind = 'completion_copy' and o.recipient_id = ccx)
+    then res := res || E'PASS T88 AT2.1: the last signature queues sealing exactly once; every party, including copy-only and viewer, is queued a completed copy\n';
+    else res := res || 'FAIL T88 completion :: ' || coalesce(st, 'null') || ' jobs=' || cnt || E'\n'; end if;
+
+    -- decline: two signers one after another, links shared by the sender (no request emails)
+    select e.id into e6 from public.create_envelope(a, org_a, 'Decline test', folder_a) e;
+    select d.id into d6 from public.add_envelope_document(a, e6, 'f.pdf', 'supabase', org_a || '/' || e6 || '/d1', repeat('ac', 32), 1, 900, '[]', 'pdf') d;
+    perform public.save_recipients(a, e6, '[{"name":"X One","email":"x1@example.test","role":"signer","routing_order":1},{"name":"X Two","email":"x2@example.test","role":"signer","routing_order":2}]');
+    select x.id into x1 from public.recipients x where x.envelope_id = e6 and x.email = 'x1@example.test';
+    select x.id into x2 from public.recipients x where x.envelope_id = e6 and x.email = 'x2@example.test';
+    perform public.save_fields(a, e6, jsonb_build_array(
+      jsonb_build_object('document_id', d6, 'recipient_id', x1, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.5, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d6, 'recipient_id', x2, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.6, 'w', 0.3, 'h', 0.07)));
+    perform public.send_envelope(a, e6, jsonb_build_array(
+      jsonb_build_object('recipient_id', x1, 'token_id', t_x1, 'nonce', repeat('06', 16), 'token_sha256', h_x1),
+      jsonb_build_object('recipient_id', x2, 'token_id', t_x2, 'nonce', repeat('07', 16), 'token_sha256', h_x2)), exp, 'link');
+    perform public.signer_open(h_x1, '203.0.113.9', 'ua');
+    perform public.signer_decline(t_x1, '  Wrong price  ', '203.0.113.9', 'ua');
+    select count(*) into cnt from public.signer_open(h_x2, '203.0.113.9', 'ua');
+    n := 0;
+    begin perform public.signer_consent(t_x1, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_decline(t_x2, null, null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.reveal_signing_links(a, e6); n := n + 1; exception when insufficient_privilege then null; end;
+    if cnt = 0 and n = 0 and (select e.status from public.envelopes e where e.id = e6) = 'declined'
+       and (select x.status || '|' || coalesce(x.decline_reason, '') from public.recipients x where x.id = x1) = 'declined|Wrong price'
+       and (select x.status from public.recipients x where x.id = x2) = 'skipped'
+       and (select count(*) from public.recipient_tokens k where k.envelope_id = e6 and k.revoked_at is null) = 0
+       and not exists (select 1 from public.seal_jobs j where j.envelope_id = e6)
+       and not exists (select 1 from public.notification_outbox o where o.envelope_id = e6 and o.kind in ('signature_request', 'completion_copy'))
+       and exists (select 1 from public.notification_outbox o where o.envelope_id = e6 and o.kind = 'declined_sender' and o.to_user_id = a)
+       and exists (select 1 from public.notifications q where q.user_id = a and q.kind = 'envelope_declined')
+       and not exists (select 1 from public.audit_events x where x.envelope_id = e6 and x.payload::text like '%Wrong price%')
+    then res := res || E'PASS T89 AT2.1: a decline stops the document for everyone at once: links revoked, the next person skipped, the sender told, nothing sealed\n';
+    else res := res || 'FAIL T89 decline :: open=' || cnt || ' n=' || n || E'\n'; end if;
+
+    update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
+  end;
+
   -- ---------- storage immutability and freezing (migration role) ----------
   execute 'reset role';
   begin update storage.objects set metadata = '{"size":2}', version = 'v2' where bucket_id = 'originals' and name = obj_path;
@@ -467,6 +621,9 @@ begin
   select * into v from app_private.audit_verify('env:' || e4);
   if v.ok and v.events >= 12 then res := res || 'PASS T73 AT1.9: the full send-sign-seal chain verifies end to end (' || v.events || E' events)\n';
   else res := res || 'FAIL T73 flow chain :: ' || coalesce(v.reason, '?') || ' events=' || v.events || E'\n'; end if;
+  if (select v2.ok from app_private.audit_verify('env:' || e5) v2) and (select v2.ok from app_private.audit_verify('env:' || e6) v2)
+  then res := res || E'PASS T90 the audit chains of the multi-recipient and the declined document verify\n';
+  else res := res || E'FAIL T90 multi-recipient chains\n'; end if;
 
   begin
     perform app_private.sanction();

@@ -73,7 +73,8 @@ export async function sendEnvelopeAction(_prev: ActionResult | null, formData: F
   const admin = supabaseAdmin();
   // The recipient ids are only used to prepare link records; send_envelope itself verifies that this
   // user may send this envelope and that the records match its signers.
-  const signers = await admin.from('recipients').select('id').eq('envelope_id', id.data).in('role', ['signer', 'in_person']);
+  // Everyone except copy-only recipients gets a link record (D-52): signers, approvers and viewers.
+  const signers = await admin.from('recipients').select('id').eq('envelope_id', id.data).neq('role', 'cc');
   const tokens = (signers.data ?? []).map((r) => mintTokenRecord(r.id as string));
   const expires = new Date(Date.now() + LINK_TTL_DAYS * 24 * 3600 * 1000).toISOString();
   const { error } = await admin.rpc('send_envelope', { p_actor: user.id, p_envelope_id: id.data, p_tokens: tokens, p_expires_at: expires, p_delivery: delivery.data });
@@ -83,7 +84,15 @@ export async function sendEnvelopeAction(_prev: ActionResult | null, formData: F
 }
 
 /** The sender asks for the signing link to share it themselves. Only members of the workspace get it. */
-export async function getSigningLinkAction(envelopeId: string): Promise<{ ok: true; links: { name: string; link: string }[] } | { ok: false; message: string }> {
+export interface RevealedLink {
+  name: string;
+  role: string;
+  order: number;
+  status: string;
+  link: string;
+}
+
+export async function getSigningLinkAction(envelopeId: string): Promise<{ ok: true; links: RevealedLink[] } | { ok: false; message: string }> {
   const user = await requireUser();
   const id = z.uuid().safeParse(envelopeId);
   if (!id.success) return { ok: false, message: 'Document not found.' };
@@ -91,8 +100,12 @@ export async function getSigningLinkAction(envelopeId: string): Promise<{ ok: tr
   // document's workspace and that the document is open, and writes "link_revealed" to the audit trail.
   const rows = await supabaseAdmin().rpc('reveal_signing_links', { p_actor: user.id, p_envelope_id: id.data });
   if (rows.error) return { ok: false, message: friendlyDbError(rows.error.message).message };
-  const links = ((rows.data ?? []) as { token_id: string; nonce_hex: string; recipient_name: string }[]).map((t) => ({
+  type Row = { token_id: string; nonce_hex: string; recipient_name: string; recipient_role: string; recipient_order: number; recipient_status: string };
+  const links = ((rows.data ?? []) as Row[]).map((t) => ({
     name: t.recipient_name,
+    role: t.recipient_role,
+    order: t.recipient_order,
+    status: t.recipient_status,
     link: signingLink(t.token_id, Buffer.from(t.nonce_hex, 'hex')),
   }));
   return { ok: true, links };

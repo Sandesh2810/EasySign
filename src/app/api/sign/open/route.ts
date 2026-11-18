@@ -29,6 +29,10 @@ export async function POST(request: NextRequest) {
   });
   const row = Array.isArray(data) ? data[0] : null;
   if (error || !row) return json(404, { error: INVALID });
+  // A valid link whose turn has not come: no session is created (the attempt is already in the audit trail).
+  if (row.turn === 'waiting') {
+    return json(403, { error: 'It is not your turn yet. Other people sign this document before you; you will get an email when it is ready for you.' });
+  }
 
   const cookie = signSession(
     { tokenId: row.token_id, recipientId: row.recipient_id, envelopeId: row.envelope_id, level: 'link' },

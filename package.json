@@ -15,7 +15,8 @@
     "setup:env": "node scripts/setup-env.mjs",
     "secret-scan": "node scripts/secret-scan.mjs --all",
     "worker": "node scripts/build-worker.mjs && node --env-file=.env.local dist/worker.mjs",
-    "worker:once": "node scripts/build-worker.mjs && node --env-file=.env.local dist/worker.mjs --once"
+    "worker:once": "node scripts/build-worker.mjs && node --env-file=.env.local dist/worker.mjs --once",
+    "test:api": "vitest run --config vitest.api.config.mts"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "1.1.1",

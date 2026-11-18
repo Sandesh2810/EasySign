@@ -57,28 +57,68 @@ export function verifyEmailTemplate(v: { name: string; confirmUrl: string }): Re
   };
 }
 
-export function signatureRequestTemplate(v: { signerName: string; senderName: string; title: string; signUrl: string; expiresOn: string }): RenderedEmail {
-  const subject = oneLine(`${v.senderName} sent you "${v.title}" to sign`);
+/** What the person receiving a request is asked to do. */
+export type RequestPurpose = 'sign' | 'approve' | 'view';
+
+const REQUEST_WORDING: Record<RequestPurpose, { subject: string; heading: string; verb: string; button: string; act: string }> = {
+  sign: { subject: 'to sign', heading: 'A document is waiting for your signature', verb: 'review and sign', button: 'Review and sign', act: 'sign as you' },
+  approve: { subject: 'to approve', heading: 'A document is waiting for your approval', verb: 'review and approve', button: 'Review and approve', act: 'approve as you' },
+  view: { subject: 'to read', heading: 'A document has been shared with you', verb: 'read', button: 'Open the document', act: 'open it' },
+};
+
+export function signatureRequestTemplate(v: { signerName: string; senderName: string; title: string; signUrl: string; expiresOn: string; purpose?: RequestPurpose }): RenderedEmail {
+  const w = REQUEST_WORDING[v.purpose ?? 'sign'];
+  const subject = oneLine(`${v.senderName} sent you "${v.title}" ${w.subject}`);
+  const noAction = v.purpose === 'view' ? ' Nothing is needed from you; you will also receive the completed copy.' : ' It takes a few minutes.';
   return {
     subject,
     html: layout({
-      preheader: `Review and sign "${v.title}".`,
-      heading: 'A document is waiting for your signature',
+      preheader: `${w.button}: "${v.title}".`,
+      heading: w.heading,
       paragraphs: [
         `Hello ${esc(v.signerName)},`,
-        `${esc(v.senderName)} has sent you <strong>${esc(v.title)}</strong> to review and sign. It takes a few minutes and you do not need an account.`,
+        `${esc(v.senderName)} has sent you <strong>${esc(v.title)}</strong> to ${w.verb}.${noAction} You do not need an account.`,
       ],
-      button: { label: 'Review and sign', url: v.signUrl },
-      footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can sign as you. If you were not expecting this document, ignore this email.`,
+      button: { label: w.button, url: v.signUrl },
+      footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can ${w.act}. If you were not expecting this document, ignore this email.`,
     }),
     text: [
       `Hello ${v.signerName},`,
       '',
-      `${v.senderName} has sent you "${v.title}" to review and sign. You do not need an account. Open this link:`,
+      `${v.senderName} has sent you "${v.title}" to ${w.verb}.${noAction} You do not need an account. Open this link:`,
       v.signUrl,
       '',
-      `The link is personal to you and works until ${v.expiresOn}. Do not forward this email: anyone who has the link can sign as you.`,
+      `The link is personal to you and works until ${v.expiresOn}. Do not forward this email: anyone who has the link can ${w.act}.`,
       'If you were not expecting this document, ignore this email.',
+    ].join('\n'),
+  };
+}
+
+/** Tells the sender that someone declined, which stops the document for everyone. */
+export function declinedTemplate(v: { name: string; title: string; declinedBy: string; reason: string | null; openUrl: string }): RenderedEmail {
+  const subject = oneLine(`Declined: "${v.title}"`);
+  const reason = v.reason ? `Their reason: “${v.reason}”` : 'They did not give a reason.';
+  return {
+    subject,
+    html: layout({
+      preheader: `${v.declinedBy} declined. The document has been stopped.`,
+      heading: 'Your document was declined',
+      paragraphs: [
+        `Hello ${esc(v.name)},`,
+        `${esc(v.declinedBy)} declined <strong>${esc(v.title)}</strong>. The document has been stopped for everyone and every signing link has been switched off. Nothing was completed.`,
+        esc(reason),
+        'To try again, create a new document.',
+      ],
+      button: { label: 'Open the document', url: v.openUrl },
+    }),
+    text: [
+      `Hello ${v.name},`,
+      '',
+      `${v.declinedBy} declined "${v.title}". The document has been stopped for everyone and every signing link has been switched off. Nothing was completed.`,
+      reason,
+      'To try again, create a new document.',
+      '',
+      v.openUrl,
     ].join('\n'),
   };
 }
