@@ -135,6 +135,68 @@ export async function getSigningLinkAction(envelopeId: string): Promise<{ ok: tr
   return { ok: true, links };
 }
 
+/** Cancel (void) a document that has been sent and is not complete. Every link stops working at once. */
+export async function voidEnvelopeAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const id = z.uuid().safeParse(formData.get('envelope_id'));
+  const reason = z.string().max(1000).safeParse(formData.get('reason') ?? '');
+  if (!id.success || !reason.success) return { ok: false, message: 'Keep the reason under 1000 characters.' };
+  if (formData.get('confirm') !== 'on') return { ok: false, message: 'Tick the box to confirm that you want to cancel this document for everyone.' };
+  const { error } = await supabaseAdmin().rpc('void_envelope', { p_actor: user.id, p_envelope_id: id.data, p_reason: reason.data });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath(`/app/envelopes/${id.data}`);
+  return { ok: true, message: 'Cancelled.' };
+}
+
+/** Email the request again to someone whose turn it is (same link). */
+export async function resendRequestAction(envelopeId: string, recipientId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const ids = z.object({ e: z.uuid(), r: z.uuid() }).safeParse({ e: envelopeId, r: recipientId });
+  if (!ids.success) return { ok: false, message: 'That request was not understood. Reload the page and try again.' };
+  const { error } = await supabaseAdmin().rpc('resend_request', { p_actor: user.id, p_envelope_id: ids.data.e, p_recipient_id: ids.data.r });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath(`/app/envelopes/${ids.data.e}`);
+  return { ok: true, message: 'Sent again.' };
+}
+
+const correctionSchema = z.object({
+  envelope_id: z.uuid(),
+  recipient_id: z.uuid(),
+  name: z.string().trim().min(1, 'Enter the person\'s name.').max(120),
+  email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address.')),
+});
+
+/**
+ * Correct a person's name or email after sending, as long as they have not finished. A new link record
+ * is always prepared; the database uses it only if the email really changed (the old link is then revoked).
+ */
+export async function correctRecipientAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = correctionSchema.safeParse({ envelope_id: formData.get('envelope_id'), recipient_id: formData.get('recipient_id'), name: formData.get('name'), email: formData.get('email') });
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Check the name and email address.' };
+  const token = mintTokenRecord(parsed.data.recipient_id);
+  const { data, error } = await supabaseAdmin().rpc('correct_recipient', {
+    p_actor: user.id,
+    p_envelope_id: parsed.data.envelope_id,
+    p_recipient_id: parsed.data.recipient_id,
+    p_name: parsed.data.name,
+    p_email: parsed.data.email,
+    p_token: { token_id: token.token_id, nonce: token.nonce, token_sha256: token.token_sha256 },
+  });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath(`/app/envelopes/${parsed.data.envelope_id}`);
+  const what = data as string;
+  return {
+    ok: true,
+    message:
+      what === 'email_changed'
+        ? 'Corrected. The old link no longer works and a new one has been issued for the new address. Anything the old address had started was cleared.'
+        : what === 'name_changed'
+          ? 'Name corrected. Their link is unchanged.'
+          : 'Nothing was changed.',
+  };
+}
+
 export async function deleteDraftAction(formData: FormData): Promise<void> {
   const user = await requireUser();
   const id = z.uuid().safeParse(formData.get('envelope_id'));

@@ -14,6 +14,8 @@ declare
   e4 uuid;
   e5 uuid;
   e6 uuid;
+  e7 uuid;
+  e8 uuid;
   d_today text := to_char((now() at time zone 'UTC')::date, 'YYYY-MM-DD');
 begin
   -- ---------- setup as the migration role ----------
@@ -584,6 +586,165 @@ begin
     update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
   end;
 
+  -- ---------- void, send again, correct a recipient (migration 11: AT2.2, AT2.3), as the service role ----------
+  declare
+    d7 uuid; d8 uuid; e9 uuid; d9 uuid; r9 uuid; exp timestamptz := now() + interval '30 days'; cnt int; st text; st2 text; row7 record; code8 text;
+    v1 uuid; v2 uuid; v3 uuid; c1 uuid; c2 uuid; c3 uuid;
+    t_v1 uuid := gen_random_uuid(); t_v2 uuid := gen_random_uuid(); t_v3 uuid := gen_random_uuid();
+    t_c1 uuid := gen_random_uuid(); t_c2 uuid := gen_random_uuid(); t_c3 uuid := gen_random_uuid(); t_c2new uuid := gen_random_uuid(); t_r9 uuid := gen_random_uuid();
+    h_v1 text := repeat('c1', 32); h_v2 text := repeat('c2', 32); h_v3 text := repeat('c3', 32);
+    h_c1 text := repeat('c4', 32); h_c2 text := repeat('c5', 32); h_c3 text := repeat('c6', 32); h_c2new text := repeat('c7', 32); h_r9 text := repeat('c8', 32);
+    newtok jsonb;
+  begin
+    update public.account_controls set approved = true, daily_recipient_cap = 50, daily_envelope_cap = 50 where user_id = a;
+
+    -- e7: two signers together, then a third; requests go by email
+    select e.id into e7 from public.create_envelope(a, org_a, 'Void test', folder_a) e;
+    select d.id into d7 from public.add_envelope_document(a, e7, 'f.pdf', 'supabase', org_a || '/' || e7 || '/d1', repeat('ad', 32), 1, 900, '[]', 'pdf') d;
+    perform public.save_recipients(a, e7, '[{"name":"V One","email":"v1@example.test","role":"signer","routing_order":1},{"name":"V Two","email":"v2@example.test","role":"signer","routing_order":1},{"name":"V Three","email":"v3@example.test","role":"signer","routing_order":2}]');
+    select x.id into v1 from public.recipients x where x.envelope_id = e7 and x.email = 'v1@example.test';
+    select x.id into v2 from public.recipients x where x.envelope_id = e7 and x.email = 'v2@example.test';
+    select x.id into v3 from public.recipients x where x.envelope_id = e7 and x.email = 'v3@example.test';
+    perform public.save_fields(a, e7, jsonb_build_array(
+      jsonb_build_object('document_id', d7, 'recipient_id', v1, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.5, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d7, 'recipient_id', v2, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.6, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d7, 'recipient_id', v3, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.7, 'w', 0.3, 'h', 0.07)));
+    perform public.set_routing_mode(a, e7, 'mixed');
+    perform public.send_envelope(a, e7, jsonb_build_array(
+      jsonb_build_object('recipient_id', v1, 'token_id', t_v1, 'nonce', repeat('11', 16), 'token_sha256', h_v1),
+      jsonb_build_object('recipient_id', v2, 'token_id', t_v2, 'nonce', repeat('12', 16), 'token_sha256', h_v2),
+      jsonb_build_object('recipient_id', v3, 'token_id', t_v3, 'nonce', repeat('13', 16), 'token_sha256', h_v3)), exp, 'email');
+    perform public.signer_open(h_v1, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_v1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_v1, 'signature', 'drawn', 'supabase', org_a || '/' || e7 || '/sig-v1.png', repeat('6a', 32), null, null, '203.0.113.9', 'ua');
+    perform public.signer_complete(t_v1, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+
+    n := 0;
+    begin perform public.void_envelope(b, e7, 'not mine'); n := n + 1; exception when insufficient_privilege then null; end;
+    perform public.void_envelope(a, e7, '  Sent by mistake  ');
+    select count(*) into cnt from public.signer_open(h_v2, '203.0.113.9', 'ua');
+    if n = 0 and cnt = 0
+       and (select e.status || '|' || coalesce(e.void_reason, '') || '|' || (e.voided_at is not null)::text from public.envelopes e where e.id = e7) = 'voided|Sent by mistake|true'
+       and (select count(*) from public.recipient_tokens k where k.envelope_id = e7 and k.revoked_at is null) = 0
+       and (select count(distinct k.revoked_at) from public.recipient_tokens k where k.envelope_id = e7) = 1
+       and (select string_agg(x.status, ',' order by x.email) from public.recipients x where x.envelope_id = e7) = 'signed,skipped,skipped'
+       and not exists (select 1 from public.seal_jobs j where j.envelope_id = e7)
+       and not exists (select 1 from public.notification_outbox o where o.envelope_id = e7 and o.kind = 'signature_request' and o.status in ('queued', 'deferred'))
+       and (select count(*) from public.notification_outbox o where o.envelope_id = e7 and o.kind = 'voided_notice' and o.recipient_id in (v1, v2)) = 2
+       and not exists (select 1 from public.notification_outbox o where o.envelope_id = e7 and o.recipient_id = v3)
+       and exists (select 1 from public.audit_events x where x.envelope_id = e7 and x.event_type = 'envelope_voided' and x.actor_id = a and (x.payload ->> 'links_revoked')::int = 3)
+       and not exists (select 1 from public.audit_events x where x.envelope_id = e7 and x.payload::text like '%mistake%')
+    then res := res || E'PASS T91 AT2.2: void revokes every link at the same instant, skips whoever was waiting, cancels unsent requests, tells the people already contacted; a non-member cannot void\n';
+    else res := res || 'FAIL T91 void :: n=' || n || ' open=' || cnt || E'\n'; end if;
+
+    n := 0;
+    begin perform public.void_envelope(a, e7, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.void_envelope(a, e5, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.void_envelope(a, e6, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_consent(t_v2, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.resend_request(a, e7, v2); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.correct_recipient(a, e7, v2, 'New', 'new@example.test', null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin update public.envelopes set status = 'sent' where id = e7; n := n + 1; exception when insufficient_privilege then null; end;
+    begin update public.envelopes set status = 'voided' where id = e5; n := n + 1; exception when insufficient_privilege then null; end;
+    if n = 0 and (select e.status from public.envelopes e where e.id = e5) = 'completed'
+    then res := res || E'PASS T92 AT2.2: a voided, completed or declined document cannot be voided, changed or reopened\n';
+    else res := res || 'FAIL T92 terminal states :: ' || n || E'\n'; end if;
+
+    -- e8: three signers one after another, by email. The second has started when their address is corrected.
+    select e.id, e.public_code into e8, code8 from public.create_envelope(a, org_a, 'Correct test', folder_a) e;
+    select d.id into d8 from public.add_envelope_document(a, e8, 'f.pdf', 'supabase', org_a || '/' || e8 || '/d1', repeat('ae', 32), 1, 900, '[]', 'pdf') d;
+    perform public.save_recipients(a, e8, '[{"name":"C One","email":"c1@example.test","role":"signer","routing_order":1},{"name":"C Two","email":"c2@example.test","role":"signer","routing_order":2},{"name":"C Three","email":"c3@example.test","role":"signer","routing_order":3}]');
+    select x.id into c1 from public.recipients x where x.envelope_id = e8 and x.email = 'c1@example.test';
+    select x.id into c2 from public.recipients x where x.envelope_id = e8 and x.email = 'c2@example.test';
+    select x.id into c3 from public.recipients x where x.envelope_id = e8 and x.email = 'c3@example.test';
+    perform public.save_fields(a, e8, jsonb_build_array(
+      jsonb_build_object('document_id', d8, 'recipient_id', c1, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.5, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d8, 'recipient_id', c2, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.6, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d8, 'recipient_id', c3, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.7, 'w', 0.3, 'h', 0.07)));
+    perform public.send_envelope(a, e8, jsonb_build_array(
+      jsonb_build_object('recipient_id', c1, 'token_id', t_c1, 'nonce', repeat('14', 16), 'token_sha256', h_c1),
+      jsonb_build_object('recipient_id', c2, 'token_id', t_c2, 'nonce', repeat('15', 16), 'token_sha256', h_c2),
+      jsonb_build_object('recipient_id', c3, 'token_id', t_c3, 'nonce', repeat('16', 16), 'token_sha256', h_c3)), exp, 'email');
+    perform public.signer_open(h_c1, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_c1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_c1, 'signature', 'drawn', 'supabase', org_a || '/' || e8 || '/sig-c1.png', repeat('6b', 32), null, null, '203.0.113.9', 'ua');
+    perform public.signer_complete(t_c1, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+    perform public.signer_open(h_c2, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_c2, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_c2, 'signature', 'drawn', 'supabase', org_a || '/' || e8 || '/sig-c2-old.png', repeat('6c', 32), null, null, '203.0.113.9', 'ua');
+    newtok := jsonb_build_object('token_id', t_c2new, 'nonce', repeat('17', 16), 'token_sha256', h_c2new);
+
+    n := 0;
+    begin perform public.correct_recipient(b, e8, c2, 'X', 'x@example.test', newtok); n := n + 1; exception when insufficient_privilege then null; end;                 -- not a member
+    begin perform public.correct_recipient(a, e8, c1, 'X', 'new1@example.test', newtok); n := n + 1; exception when insufficient_privilege then null; end;             -- already signed
+    begin perform public.correct_recipient(a, e8, c2, 'C Two', 'c3@example.test', newtok); n := n + 1; exception when invalid_parameter_value then null; end;          -- already on the document
+    begin perform public.correct_recipient(a, e8, c2, 'C Two', 'not-an-email', newtok); n := n + 1; exception when invalid_parameter_value then null; end;
+    begin perform public.correct_recipient(a, e8, c2, 'C Two', 'c2new@example.test', null); n := n + 1; exception when invalid_parameter_value then null; end;         -- no new link record
+    st := public.correct_recipient(a, e8, c2, ' C Two Corrected ', 'C2New@Example.test', newtok);
+    select count(*) into cnt from public.signer_open(h_c2, '203.0.113.9', 'ua');
+    select * into row7 from public.signer_open(h_c2new, '203.0.113.9', 'ua');
+    if n = 0 and st = 'email_changed' and cnt = 0 and row7.turn = 'now' and row7.recipient_status = 'viewed'
+       and (select x.name || '|' || x.email || '|' || (x.consented_at is null)::text from public.recipients x where x.id = c2) = 'C Two Corrected|c2new@example.test|true'
+       and (select k.revoked_at is not null from public.recipient_tokens k where k.id = t_c2)
+       and exists (select 1 from public.recipient_tokens k where k.id = t_c2new and k.recipient_id = c2 and k.revoked_at is null and k.token_sha256 = decode(h_c2new, 'hex'))
+       and not exists (select 1 from public.consents q where q.recipient_id = c2 and q.withdrawn_at is null)
+       and exists (select 1 from public.consents q where q.recipient_id = c2 and q.withdrawn_at is not null)
+       and not exists (select 1 from public.signature_assets s where s.recipient_id = c2)
+       and (select o.status from public.notification_outbox o where o.idempotency_key = 'request:' || c2 || ':1') = 'dead'
+       and (select o.status || '|' || o.priority from public.notification_outbox o where o.idempotency_key = 'request:' || c2 || ':2') = 'queued|P0_REQUEST'
+       and exists (select 1 from public.audit_events x where x.envelope_id = e8 and x.recipient_id = c2 and x.event_type = 'recipient_corrected' and x.actor_id = a
+                     and (x.payload ->> 'link_reissued')::boolean and (x.payload ->> 'progress_reset')::boolean)
+       and not exists (select 1 from public.audit_events x where x.envelope_id = e8 and x.payload::text like '%c2new%')
+       -- earlier and later people are untouched
+       and (select x.status from public.recipients x where x.id = c1) = 'signed'
+       and (select k.revoked_at is null from public.recipient_tokens k where k.id = t_c1)
+       and (select v2.signature_id from public.field_values v2 join public.fields f on f.id = v2.field_id where f.recipient_id = c1) = code8 || '-S1'
+       and (select x.status from public.recipients x where x.id = c3) = 'created'
+       and (select k.revoked_at is null from public.recipient_tokens k where k.id = t_c3)
+    then res := res || E'PASS T93 AT2.3: correcting an email revokes the old link, issues a new one, undoes what the old address had started, re-sends the request, records it, and leaves everyone else untouched\n';
+    else res := res || 'FAIL T93 correct :: n=' || n || ' st=' || coalesce(st, 'null') || ' old=' || cnt || ' turn=' || coalesce(row7.turn, 'null') || E'\n'; end if;
+
+    perform public.signer_consent(t_c2new, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_c2new, 'signature', 'drawn', 'supabase', org_a || '/' || e8 || '/sig-c2-new.png', repeat('6d', 32), null, null, '203.0.113.9', 'ua');
+    st := public.signer_complete(t_c2new, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+    st2 := public.correct_recipient(a, e8, c3, 'C Three Renamed', 'c3@example.test', null);
+    if st = 'waiting' and st2 = 'name_changed' and public.correct_recipient(a, e8, c3, 'C Three Renamed', 'c3@example.test', null) = 'unchanged'
+       and (select v2.signature_id from public.field_values v2 join public.fields f on f.id = v2.field_id where f.recipient_id = c2) = code8 || '-S2'
+       and (select x.name || '|' || x.status from public.recipients x where x.id = c3) = 'C Three Renamed|sent'
+       and (select count(*) from public.recipient_tokens k where k.recipient_id = c3) = 1
+       and (select k.revoked_at is null from public.recipient_tokens k where k.id = t_c3)
+    then res := res || E'PASS T94 AT2.3: the corrected person signs with the new link; a name-only correction keeps the same link\n';
+    else res := res || 'FAIL T94 :: ' || coalesce(st, 'null') || ' ' || coalesce(st2, 'null') || E'\n'; end if;
+
+    n := 0;
+    begin perform public.resend_request(a, e8, c3); n := n + 1; exception when configuration_limit_exceeded then null; end;   -- asked a moment ago
+    begin perform public.resend_request(a, e8, c1); n := n + 1; exception when invalid_parameter_value then null; end;       -- already signed
+    begin perform public.resend_request(b, e8, c3); n := n + 1; exception when insufficient_privilege then null; end;        -- not a member
+    update public.notification_outbox set created_at = now() - interval '1 hour' where recipient_id = c3;
+    perform public.resend_request(a, e8, c3);
+    if n = 0 and (select o.priority || '|' || o.kind || '|' || o.status from public.notification_outbox o where o.idempotency_key = 'request:' || c3 || ':2') = 'P1|signature_request|queued'
+       and exists (select 1 from public.audit_events x where x.envelope_id = e8 and x.recipient_id = c3 and x.event_type = 'request_resent' and x.actor_id = a)
+       and (select count(*) from public.recipient_tokens k where k.recipient_id = c3 and k.revoked_at is null) = 1
+    then res := res || E'PASS T95 a request can be sent again to someone whose turn it is, with the same link, but not within ten minutes, not to someone who finished, and not by an outsider\n';
+    else res := res || 'FAIL T95 resend :: ' || n || E'\n'; end if;
+
+    -- correcting a recipient must not be a way round approval mode
+    update public.account_controls set approved = false where user_id = a;
+    select e.id into e9 from public.create_envelope(a, org_a, 'Self then external', folder_a) e;
+    select d.id into d9 from public.add_envelope_document(a, e9, 'f.pdf', 'supabase', org_a || '/' || e9 || '/d1', repeat('af', 32), 1, 900, '[]', 'pdf') d;
+    select x.id into r9 from public.save_recipients(a, e9, '[{"name":"Alice Test","email":"rls-a@example.test","role":"signer","routing_order":1,"is_sender":true}]') x limit 1;
+    perform public.save_fields(a, e9, jsonb_build_array(jsonb_build_object('document_id', d9, 'recipient_id', r9, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.5, 'w', 0.3, 'h', 0.07)));
+    perform public.send_envelope(a, e9, jsonb_build_array(jsonb_build_object('recipient_id', r9, 'token_id', t_r9, 'nonce', repeat('18', 16), 'token_sha256', h_r9)), exp, 'link');
+    n := 0;
+    begin perform public.correct_recipient(a, e9, r9, 'Outside Person', 'outside@example.test', jsonb_build_object('token_id', gen_random_uuid(), 'nonce', repeat('19', 16), 'token_sha256', repeat('c9', 32))); n := n + 1;
+    exception when insufficient_privilege then null; end;
+    if n = 0 and (select e.self_sign from public.envelopes e where e.id = e9) and (select x.email from public.recipients x where x.id = r9) = 'rls-a@example.test'
+    then res := res || E'PASS T96 AT1.3: an unapproved account cannot turn a self-signed document into one for someone else by correcting the recipient\n';
+    else res := res || 'FAIL T96 approval bypass :: ' || n || E'\n'; end if;
+
+    update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
+  end;
+
   -- ---------- storage immutability and freezing (migration role) ----------
   execute 'reset role';
   begin update storage.objects set metadata = '{"size":2}', version = 'v2' where bucket_id = 'originals' and name = obj_path;
@@ -624,6 +785,9 @@ begin
   if (select v2.ok from app_private.audit_verify('env:' || e5) v2) and (select v2.ok from app_private.audit_verify('env:' || e6) v2)
   then res := res || E'PASS T90 the audit chains of the multi-recipient and the declined document verify\n';
   else res := res || E'FAIL T90 multi-recipient chains\n'; end if;
+  if (select v2.ok from app_private.audit_verify('env:' || e7) v2) and (select v2.ok from app_private.audit_verify('env:' || e8) v2)
+  then res := res || E'PASS T97 the audit chains of the voided and the corrected document verify\n';
+  else res := res || E'FAIL T97 void/correct chains\n'; end if;
 
   begin
     perform app_private.sanction();

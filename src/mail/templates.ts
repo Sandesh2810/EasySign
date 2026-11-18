@@ -94,6 +94,32 @@ export function signatureRequestTemplate(v: { signerName: string; senderName: st
   };
 }
 
+/** Tells someone who had already been asked that the sender has cancelled the document. */
+export function voidedTemplate(v: { name: string; senderName: string; title: string }): RenderedEmail {
+  const subject = oneLine(`Cancelled: "${v.title}"`);
+  return {
+    subject,
+    html: layout({
+      preheader: `${v.senderName} cancelled this document. Nothing more is needed from you.`,
+      heading: 'This document was cancelled',
+      paragraphs: [
+        `Hello ${esc(v.name)},`,
+        `${esc(v.senderName)} has cancelled <strong>${esc(v.title)}</strong>. The link you were sent no longer works and nothing more is needed from you.`,
+        'If you had already signed, your signature does not take effect: the document was never completed.',
+      ],
+      footnote: `If you have questions, contact ${esc(v.senderName)} directly. Replies to this email are not read.`,
+    }),
+    text: [
+      `Hello ${v.name},`,
+      '',
+      `${v.senderName} has cancelled "${v.title}". The link you were sent no longer works and nothing more is needed from you.`,
+      'If you had already signed, your signature does not take effect: the document was never completed.',
+      '',
+      `If you have questions, contact ${v.senderName} directly.`,
+    ].join('\n'),
+  };
+}
+
 /** Tells the sender that someone declined, which stops the document for everyone. */
 export function declinedTemplate(v: { name: string; title: string; declinedBy: string; reason: string | null; openUrl: string }): RenderedEmail {
   const subject = oneLine(`Declined: "${v.title}"`);

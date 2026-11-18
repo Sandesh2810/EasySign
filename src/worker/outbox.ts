@@ -6,7 +6,7 @@ import { decide, nextUtcMidnight, type BudgetState, type EmailClass } from '@/li
 import { byteaToBuffer, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
-import { completionTemplate, declinedTemplate, signatureRequestTemplate, type RenderedEmail, type RequestPurpose } from '@/mail/templates';
+import { completionTemplate, declinedTemplate, signatureRequestTemplate, voidedTemplate, type RenderedEmail, type RequestPurpose } from '@/mail/templates';
 import { MailQuotaError, type MailAttachment } from '@/mail/types';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -50,6 +50,16 @@ async function prepare(row: OutboxRow): Promise<Prepared> {
     .eq('id', row.envelope_id)
     .maybeSingle();
   if (!envelope) throw new Error('envelope not found');
+
+  if (row.kind === 'voided_notice') {
+    if (envelope.status !== 'voided') throw new Error('envelope is not voided');
+    const [{ data: recipient }, sender] = await Promise.all([
+      db.from('recipients').select('name, email').eq('id', row.recipient_id!).maybeSingle(),
+      userEmail(envelope.sender_id as string),
+    ]);
+    if (!recipient) throw new Error('recipient not found');
+    return { to: recipient.email as string, email: voidedTemplate({ name: recipient.name as string, senderName: sender.name, title: envelope.title as string }) };
+  }
 
   if (row.kind === 'declined_sender') {
     if (envelope.status !== 'declined') throw new Error('envelope is not declined');

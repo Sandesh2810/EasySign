@@ -12,6 +12,7 @@ import { progressLabel, ROLE_LABEL } from '@/lib/recipient-labels';
 import type { RecipientStatus, Role, RoutingMode } from '@/lib/routing';
 import { deleteDraftAction } from '../actions';
 import { FieldEditor, type EditorField } from './field-editor';
+import { PersonActions, VoidPanel } from './open-actions';
 import { RecipientsEditor, type EditableRecipient } from './recipients-editor';
 import { SendPanel, SigningLinkPanel } from './send-panel';
 
@@ -44,7 +45,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
 
   const supabase = await createSupabaseServerClient();
   const [{ data: env }, { data: docs }, { data: recipientRows }, { data: fields }, { data: profile }] = await Promise.all([
-    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode').eq('id', id.data).maybeSingle(),
+    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason').eq('id', id.data).maybeSingle(),
     supabase.from('envelope_documents').select('id, filename, page_count, size_bytes, sha256').eq('envelope_id', id.data).order('position'),
     supabase.from('recipients').select('id, name, email, role, status, is_sender, routing_order, decline_reason').eq('envelope_id', id.data).order('routing_order').order('created_at'),
     supabase.from('fields').select('id, recipient_id, type, page, x, y, w, h, required').eq('envelope_id', id.data),
@@ -92,6 +93,12 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
         </Notice>
       ) : null}
 
+      {env.status === 'voided' ? (
+        <Notice tone="danger">
+          You cancelled this document. {env.void_reason ? `Your reason: “${env.void_reason}”` : 'No reason was recorded.'} Every signing link is switched off and nothing was completed. To try again, create a new document.
+        </Notice>
+      ) : null}
+
       <section className="rounded-lg bg-surface p-6 shadow-soft">
         <h2 className="mb-3 text-base font-medium text-ink">{isDraft ? '1. Who is involved?' : 'People'}</h2>
         {isDraft ? (
@@ -115,6 +122,14 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
                 </span>
                 <span className="text-ink-body">{ROLE_LABEL[r.role]}</span>
                 <span className="font-medium text-ink">{progressLabel(r.role, r.status)}</span>
+                {isOpen ? (
+                  <PersonActions
+                    envelopeId={env.id}
+                    person={{ id: r.id, name: r.name, email: r.email }}
+                    canResend={env.delivery === 'email' && r.role !== 'cc' && !r.is_sender && ['sent', 'viewed', 'consented'].includes(r.status)}
+                    canCorrect={['created', 'sent', 'viewed', 'consented'].includes(r.status)}
+                  />
+                ) : null}
               </li>
             ))}
           </ol>
@@ -157,6 +172,13 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
         <section className="rounded-lg bg-surface p-6 shadow-soft">
           <h2 className="mb-3 text-base font-medium text-ink">{isDraft ? '3. Send' : 'Signing links'}</h2>
           {isDraft ? <SendPanel envelopeId={env.id} selfSign={selfSign} hasSigner={signers.length > 0} /> : <SigningLinkPanel envelopeId={env.id} selfSign={selfSign} />}
+        </section>
+      ) : null}
+
+      {isOpen ? (
+        <section className="rounded-lg bg-surface p-6 shadow-soft">
+          <h2 className="mb-3 text-base font-medium text-ink">Cancel this document</h2>
+          <VoidPanel envelopeId={env.id} />
         </section>
       ) : null}
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { completionTemplate, declinedTemplate, signatureRequestTemplate } from './templates';
+import { completionTemplate, declinedTemplate, signatureRequestTemplate, voidedTemplate } from './templates';
 
 const LINK = 'http://localhost:3000/s#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
@@ -47,6 +47,16 @@ describe('signing email templates', () => {
       expect(t.html.match(/href="/g)).toHaveLength(1);
       expect(t.text).toContain(LINK);
     }
+  });
+
+  it('the cancellation notice carries no link at all and escapes names', () => {
+    const t = voidedTemplate({ name: '<b>Sam</b>', senderName: '<i>Alice</i>', title: 'NDA' });
+    expect(t.subject).toBe('Cancelled: "NDA"');
+    expect(t.html).not.toMatch(/href="/);
+    expect(t.html).not.toContain('<b>Sam');
+    expect(t.html).not.toContain('<i>Alice');
+    expect(t.text).toContain('no longer works');
+    expect(t.text).toContain('never completed');
   });
 
   it('the decline notice escapes the reason, carries no signing link, and says the document stopped', () => {
