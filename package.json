@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
+    "test:rls": "vitest run --config vitest.rls.config.mts",
     "tokens": "node scripts/build-tokens.mjs",
     "check:contrast": "node design/contrast-check.mjs",
     "setup:env": "node scripts/setup-env.mjs",
