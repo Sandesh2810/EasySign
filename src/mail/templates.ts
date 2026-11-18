@@ -66,18 +66,20 @@ const REQUEST_WORDING: Record<RequestPurpose, { subject: string; heading: string
   view: { subject: 'to read', heading: 'A document has been shared with you', verb: 'read', button: 'Open the document', act: 'open it' },
 };
 
-export function signatureRequestTemplate(v: { signerName: string; senderName: string; title: string; signUrl: string; expiresOn: string; purpose?: RequestPurpose }): RenderedEmail {
+export function signatureRequestTemplate(v: { signerName: string; senderName: string; title: string; signUrl: string; expiresOn: string; purpose?: RequestPurpose; reminder?: boolean }): RenderedEmail {
   const w = REQUEST_WORDING[v.purpose ?? 'sign'];
-  const subject = oneLine(`${v.senderName} sent you "${v.title}" ${w.subject}`);
+  const subject = oneLine(v.reminder ? `Reminder: "${v.title}" is still waiting for you ${w.subject}` : `${v.senderName} sent you "${v.title}" ${w.subject}`);
   const noAction = v.purpose === 'view' ? ' Nothing is needed from you; you will also receive the completed copy.' : ' It takes a few minutes.';
   return {
     subject,
     html: layout({
       preheader: `${w.button}: "${v.title}".`,
-      heading: w.heading,
+      heading: v.reminder ? `Reminder: ${w.heading.charAt(0).toLowerCase()}${w.heading.slice(1)}` : w.heading,
       paragraphs: [
         `Hello ${esc(v.signerName)},`,
-        `${esc(v.senderName)} has sent you <strong>${esc(v.title)}</strong> to ${w.verb}.${noAction} You do not need an account.`,
+        v.reminder
+          ? `This is a reminder that ${esc(v.senderName)} sent you <strong>${esc(v.title)}</strong> to ${w.verb}, and it is still waiting. You do not need an account.`
+          : `${esc(v.senderName)} has sent you <strong>${esc(v.title)}</strong> to ${w.verb}.${noAction} You do not need an account.`,
       ],
       button: { label: w.button, url: v.signUrl },
       footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can ${w.act}. If you were not expecting this document, ignore this email.`,
@@ -85,11 +87,39 @@ export function signatureRequestTemplate(v: { signerName: string; senderName: st
     text: [
       `Hello ${v.signerName},`,
       '',
-      `${v.senderName} has sent you "${v.title}" to ${w.verb}.${noAction} You do not need an account. Open this link:`,
+      v.reminder
+        ? `This is a reminder that ${v.senderName} sent you "${v.title}" to ${w.verb}, and it is still waiting. You do not need an account. Open this link:`
+        : `${v.senderName} has sent you "${v.title}" to ${w.verb}.${noAction} You do not need an account. Open this link:`,
       v.signUrl,
       '',
       `The link is personal to you and works until ${v.expiresOn}. Do not forward this email: anyone who has the link can ${w.act}.`,
       'If you were not expecting this document, ignore this email.',
+    ].join('\n'),
+  };
+}
+
+/** Tells the sender that a document reached its expiry date before everyone finished. */
+export function expiredTemplate(v: { name: string; title: string; openUrl: string }): RenderedEmail {
+  const subject = oneLine(`Expired: "${v.title}"`);
+  return {
+    subject,
+    html: layout({
+      preheader: 'Not everyone finished in time. The links no longer work.',
+      heading: 'Your document expired',
+      paragraphs: [
+        `Hello ${esc(v.name)},`,
+        `<strong>${esc(v.title)}</strong> reached its expiry date before everyone had finished. Every signing link has been switched off and nothing was completed.`,
+        'To try again, create a new document. You can choose a longer time limit when you send it.',
+      ],
+      button: { label: 'Open the document', url: v.openUrl },
+    }),
+    text: [
+      `Hello ${v.name},`,
+      '',
+      `"${v.title}" reached its expiry date before everyone had finished. Every signing link has been switched off and nothing was completed.`,
+      'To try again, create a new document. You can choose a longer time limit when you send it.',
+      '',
+      v.openUrl,
     ].join('\n'),
   };
 }

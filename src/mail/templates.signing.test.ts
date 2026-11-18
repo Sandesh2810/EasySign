@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { completionTemplate, declinedTemplate, signatureRequestTemplate, voidedTemplate } from './templates';
+import { completionTemplate, declinedTemplate, expiredTemplate, signatureRequestTemplate, voidedTemplate } from './templates';
 
 const LINK = 'http://localhost:3000/s#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
@@ -47,6 +47,25 @@ describe('signing email templates', () => {
       expect(t.html.match(/href="/g)).toHaveLength(1);
       expect(t.text).toContain(LINK);
     }
+  });
+
+  it('a reminder says it is a reminder, keeps the single personal link, and follows the person\'s role', () => {
+    const sign = signatureRequestTemplate({ signerName: 'Sam', senderName: 'Alice', title: 'NDA', signUrl: LINK, expiresOn: '2026-12-18', reminder: true });
+    expect(sign.subject).toBe('Reminder: "NDA" is still waiting for you to sign');
+    expect(sign.text).toContain('This is a reminder');
+    expect(sign.html.match(/href="/g)).toHaveLength(1);
+    expect(sign.text).toContain(LINK);
+    const approve = signatureRequestTemplate({ signerName: 'Boss', senderName: 'Alice', title: 'NDA', signUrl: LINK, expiresOn: '2026-12-18', purpose: 'approve', reminder: true });
+    expect(approve.subject).toBe('Reminder: "NDA" is still waiting for you to approve');
+    expect(approve.html).toContain('Review and approve');
+  });
+
+  it('the expiry notice to the sender has no signing link and says nothing was completed', () => {
+    const t = expiredTemplate({ name: 'Alice', title: '<b>NDA</b>', openUrl: 'http://localhost:3000/app/envelopes/abc' });
+    expect(t.subject).toBe('Expired: "<b>NDA</b>"');
+    expect(t.html).not.toContain('<b>NDA');
+    expect(t.html).not.toContain('/s#');
+    expect(t.text).toContain('nothing was completed');
   });
 
   it('the cancellation notice carries no link at all and escapes names', () => {

@@ -82,7 +82,9 @@ export async function saveFieldsAction(envelopeId: string, fields: unknown): Pro
   return { ok: true, hash: data as string };
 }
 
-const LINK_TTL_DAYS = 30;
+const EXPIRY_CHOICES = [7, 14, 30, 60] as const;
+/** remind choice on the send form -> [first reminder after N days, then every N days, at most N times] */
+const REMINDER_CHOICES: Record<string, [number | null, number | null, number]> = { '0': [null, null, 0], '1': [1, 1, 5], '3': [3, 3, 3], '7': [7, 7, 3] };
 
 /**
  * Send the document. delivery "email" queues the request email (written to the dev outbox in log mode);
@@ -100,7 +102,13 @@ export async function sendEnvelopeAction(_prev: ActionResult | null, formData: F
   // Everyone except copy-only recipients gets a link record (D-52): signers, approvers and viewers.
   const signers = await admin.from('recipients').select('id').eq('envelope_id', id.data).neq('role', 'cc');
   const tokens = (signers.data ?? []).map((r) => mintTokenRecord(r.id as string));
-  const expires = new Date(Date.now() + LINK_TTL_DAYS * 24 * 3600 * 1000).toISOString();
+  const days = Number(formData.get('expires_days') ?? 30);
+  const expiryDays = (EXPIRY_CHOICES as readonly number[]).includes(days) ? days : 30;
+  const expires = new Date(Date.now() + expiryDays * 24 * 3600 * 1000).toISOString();
+  // Reminders are emails, so they are switched off when the sender shares the links personally.
+  const [after, every, max] = delivery.data === 'email' ? (REMINDER_CHOICES[String(formData.get('remind') ?? '3')] ?? REMINDER_CHOICES['3']) : REMINDER_CHOICES['0'];
+  const reminders = await admin.rpc('set_reminders', { p_actor: user.id, p_envelope_id: id.data, p_after_days: after, p_every_days: every, p_max: max });
+  if (reminders.error) return { ok: false, message: friendlyDbError(reminders.error.message).message };
   const { error } = await admin.rpc('send_envelope', { p_actor: user.id, p_envelope_id: id.data, p_tokens: tokens, p_expires_at: expires, p_delivery: delivery.data });
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
   revalidatePath(`/app/envelopes/${id.data}`);

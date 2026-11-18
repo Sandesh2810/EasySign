@@ -6,7 +6,7 @@ import { decide, nextUtcMidnight, type BudgetState, type EmailClass } from '@/li
 import { byteaToBuffer, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
-import { completionTemplate, declinedTemplate, signatureRequestTemplate, voidedTemplate, type RenderedEmail, type RequestPurpose } from '@/mail/templates';
+import { completionTemplate, declinedTemplate, expiredTemplate, signatureRequestTemplate, voidedTemplate, type RenderedEmail, type RequestPurpose } from '@/mail/templates';
 import { MailQuotaError, type MailAttachment } from '@/mail/types';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -61,6 +61,12 @@ async function prepare(row: OutboxRow): Promise<Prepared> {
     return { to: recipient.email as string, email: voidedTemplate({ name: recipient.name as string, senderName: sender.name, title: envelope.title as string }) };
   }
 
+  if (row.kind === 'expired_sender') {
+    if (envelope.status !== 'expired') throw new Error('envelope is not expired');
+    const to = await userEmail((row.to_user_id ?? envelope.sender_id) as string);
+    return { to: to.email, email: expiredTemplate({ name: to.name, title: envelope.title as string, openUrl: `${env.appUrl()}/app/envelopes/${envelope.id}` }) };
+  }
+
   if (row.kind === 'declined_sender') {
     if (envelope.status !== 'declined') throw new Error('envelope is not declined');
     const [to, { data: decliner }] = await Promise.all([
@@ -79,11 +85,11 @@ async function prepare(row: OutboxRow): Promise<Prepared> {
     };
   }
 
-  if (Object.hasOwn(REQUEST_PURPOSE, row.kind)) {
+  if (Object.hasOwn(REQUEST_PURPOSE, row.kind) || row.kind === 'reminder') {
     if (!row.recipient_id) throw new Error('request without a recipient');
     if (!['sent', 'in_progress'].includes(envelope.status as string)) throw new Error('envelope is no longer open');
     const [{ data: recipient }, { data: token }, sender] = await Promise.all([
-      db.from('recipients').select('name, email').eq('id', row.recipient_id).maybeSingle(),
+      db.from('recipients').select('name, email, role').eq('id', row.recipient_id).maybeSingle(),
       db.from('recipient_tokens').select('id, nonce, expires_at').eq('recipient_id', row.recipient_id).is('revoked_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       userEmail(envelope.sender_id as string),
     ]);
@@ -96,7 +102,9 @@ async function prepare(row: OutboxRow): Promise<Prepared> {
         title: envelope.title as string,
         signUrl: signingLink(token.id as string, byteaToBuffer(token.nonce as string)),
         expiresOn: new Date(token.expires_at as string).toISOString().slice(0, 10),
-        purpose: REQUEST_PURPOSE[row.kind],
+        // a reminder repeats the original request, so what it asks for follows the person's role
+        purpose: REQUEST_PURPOSE[row.kind] ?? (recipient.role === 'approver' ? 'approve' : recipient.role === 'viewer' ? 'view' : 'sign'),
+        reminder: row.kind === 'reminder',
       }),
     };
   }

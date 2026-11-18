@@ -3,6 +3,7 @@
 //   npm run worker        -> runs until stopped (Ctrl+C)
 //   npm run worker:once   -> drains what is waiting, then exits (used by tests and verify scripts)
 import { NOTIFY_MODE } from '@/config/brand';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 import { runOutbox } from './outbox';
 import { runOneSealJob } from './seal-job';
 
@@ -18,9 +19,26 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   });
 }
 
+const DUE_EVERY_MS = 60_000;
+let lastDueCheck = 0;
+
+/** About once a minute: close documents whose date has passed and queue reminders that have come due. */
+async function runDue(): Promise<boolean> {
+  if (Date.now() - lastDueCheck < DUE_EVERY_MS) return false;
+  lastDueCheck = Date.now();
+  const { data, error } = await supabaseAdmin().rpc('process_due', {});
+  if (error) throw new Error(`process_due: ${error.message}`);
+  const row = (Array.isArray(data) ? data[0] : data) as { expired_count: number; reminder_count: number } | null;
+  if (row && (row.expired_count > 0 || row.reminder_count > 0)) {
+    log(`due: ${row.expired_count} document(s) expired, ${row.reminder_count} reminder(s) queued`);
+    return true;
+  }
+  return false;
+}
+
 /** One pass: returns true when something was done (so the loop looks again straight away). */
 async function tick(): Promise<boolean> {
-  let busy = false;
+  let busy = await runDue();
   const seal = await runOneSealJob(log);
   if (seal !== 'none') busy = true;
   if ((await runOutbox(log)) > 0) busy = true;

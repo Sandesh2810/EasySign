@@ -16,6 +16,7 @@ declare
   e6 uuid;
   e7 uuid;
   e8 uuid;
+  e10 uuid;
   d_today text := to_char((now() at time zone 'UTC')::date, 'YYYY-MM-DD');
 begin
   -- ---------- setup as the migration role ----------
@@ -745,6 +746,122 @@ begin
     update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
   end;
 
+  -- ---------- reminders, expiry, outbox crash safety (migration 12: AT2.4, AT2.5), as the service role ----------
+  declare
+    d10 uuid; exp timestamptz := now() + interval '30 days'; cnt int; cnt2 int; st text; st2 text; oid uuid;
+    q1 uuid; q2 uuid; t_q1 uuid := gen_random_uuid(); t_q2 uuid := gen_random_uuid(); h_q1 text := repeat('d1', 32); h_q2 text := repeat('d2', 32);
+  begin
+    update public.account_controls set approved = true, daily_recipient_cap = 50, daily_envelope_cap = 50 where user_id = a;
+    select e.id into e10 from public.create_envelope(a, org_a, 'Reminder test', folder_a) e;
+    select d.id into d10 from public.add_envelope_document(a, e10, 'f.pdf', 'supabase', org_a || '/' || e10 || '/d1', repeat('b0', 32), 1, 900, '[]', 'pdf') d;
+    perform public.save_recipients(a, e10, '[{"name":"R One","email":"r1@example.test","role":"signer","routing_order":1},{"name":"R Two","email":"r2@example.test","role":"signer","routing_order":1}]');
+    select x.id into q1 from public.recipients x where x.envelope_id = e10 and x.email = 'r1@example.test';
+    select x.id into q2 from public.recipients x where x.envelope_id = e10 and x.email = 'r2@example.test';
+    perform public.save_fields(a, e10, jsonb_build_array(
+      jsonb_build_object('document_id', d10, 'recipient_id', q1, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.5, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d10, 'recipient_id', q2, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.6, 'w', 0.3, 'h', 0.07)));
+    perform public.set_routing_mode(a, e10, 'parallel');
+    n := 0;
+    begin perform public.set_reminders(b, e10, 3, 2, 2); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.set_reminders(a, e10, 40, 2, 2); n := n + 1; exception when invalid_parameter_value then null; end;
+    perform public.set_reminders(a, e10, 3, 2, 2);
+    perform public.send_envelope(a, e10, jsonb_build_array(
+      jsonb_build_object('recipient_id', q1, 'token_id', t_q1, 'nonce', repeat('21', 16), 'token_sha256', h_q1),
+      jsonb_build_object('recipient_id', q2, 'token_id', t_q2, 'nonce', repeat('22', 16), 'token_sha256', h_q2)), exp, 'email');
+    begin perform public.set_reminders(a, e10, 1, 1, 5); n := n + 1; exception when insufficient_privilege then null; end; -- not after sending
+    perform public.signer_open(h_q1, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_q1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_q1, 'signature', 'drawn', 'supabase', org_a || '/' || e10 || '/sig-q1.png', repeat('6e', 32), null, null, '203.0.113.9', 'ua');
+    perform public.signer_complete(t_q1, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+
+    cnt2 := 0;
+    begin perform public.process_due(now() + interval '1 day'); cnt2 := cnt2 + 1; exception when invalid_parameter_value then null; end;
+    perform public.process_due(now());
+    if cnt2 = 0 and (select e.status from public.envelopes e where e.id = e10) = 'in_progress'
+    then res := res || E'PASS T104 the time-based job refuses a future time unless the caller says it is a test, so it cannot expire real documents by accident\n';
+    else res := res || 'FAIL T104 clock guard :: ' || cnt2 || E'\n'; end if;
+    perform set_config('easysign.test_clock', 'on', true);
+
+    perform public.process_due(now() + interval '2 days');
+    select count(*) into cnt from public.notification_outbox o where o.envelope_id = e10 and o.kind = 'reminder';
+    perform public.process_due(now() + interval '3 days 1 hour');
+    perform public.process_due(now() + interval '3 days 1 hour');   -- the same moment again (a second worker, or a re-run)
+    perform public.process_due(now() + interval '4 days');           -- before the next interval
+    select count(*) into cnt2 from public.notification_outbox o where o.envelope_id = e10 and o.kind = 'reminder';
+    if n = 0 and cnt = 0 and cnt2 = 1
+       and exists (select 1 from public.notification_outbox o where o.idempotency_key = 'reminder:' || q2 || ':1' and o.priority = 'P2' and o.status = 'queued' and o.payload = '{}'::jsonb)
+       and not exists (select 1 from public.notification_outbox o where o.recipient_id = q1 and o.kind = 'reminder')
+       and (select count(*) from public.audit_events x where x.envelope_id = e10 and x.event_type = 'reminder_queued') = 1
+    then res := res || E'PASS T98 AT2.4: with the clock moved forward, a reminder is queued once the interval has passed, only for the person who has not finished, and exactly once however often the job runs\n';
+    else res := res || 'FAIL T98 reminders :: n=' || n || ' early=' || cnt || ' after=' || cnt2 || E'\n'; end if;
+
+    perform public.process_due(now() + interval '5 days 2 hours');
+    perform public.process_due(now() + interval '9 days');
+    perform public.process_due(now() + interval '20 days');
+    perform public.process_due(exp - interval '30 minutes');
+    select e.status into st from public.envelopes e where e.id = e10;
+    if st = 'in_progress' and (select count(*) from public.notification_outbox o where o.envelope_id = e10 and o.kind = 'reminder') = 2
+       and exists (select 1 from public.notification_outbox o where o.idempotency_key = 'reminder:' || q2 || ':2')
+    then res := res || E'PASS T99 AT2.4: reminders repeat at the chosen interval and stop at the chosen maximum; nothing expires before its date\n';
+    else res := res || 'FAIL T99 reminder repeat :: ' || coalesce(st, 'null') || E'\n'; end if;
+
+    perform public.process_due(exp + interval '1 minute');
+    perform public.process_due(exp + interval '2 minutes');           -- run again
+    select count(*) into cnt from public.signer_open(h_q2, '203.0.113.9', 'ua');
+    n := 0;
+    begin perform public.void_envelope(a, e10, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_consent(t_q2, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin update public.envelopes set status = 'sent' where id = e10; n := n + 1; exception when insufficient_privilege then null; end;
+    if cnt = 0 and n = 0
+       and (select e.status || '|' || (e.expired_at is not null)::text from public.envelopes e where e.id = e10) = 'expired|true'
+       and (select string_agg(x.status, ',' order by x.email) from public.recipients x where x.envelope_id = e10) = 'signed,expired'
+       and (select count(*) from public.recipient_tokens k where k.envelope_id = e10 and k.revoked_at is null) = 0
+       and not exists (select 1 from public.notification_outbox o where o.envelope_id = e10 and o.kind in ('reminder', 'signature_request') and o.status in ('queued', 'deferred'))
+       and (select count(*) from public.notification_outbox o where o.idempotency_key = 'expired:' || e10 and o.kind = 'expired_sender' and o.to_user_id = a) = 1
+       and (select count(*) from public.notifications q where q.user_id = a and q.kind = 'envelope_expired' and q.payload ->> 'envelope_id' = e10::text) = 1
+       and (select count(*) from public.audit_events x where x.envelope_id = e10 and x.event_type = 'envelope_expired') = 1
+       and not exists (select 1 from public.seal_jobs j where j.envelope_id = e10)
+       and (select e.status from public.envelopes e where e.id = e5) = 'completed'
+       and (select e.status from public.envelopes e where e.id = e7) = 'voided'
+    then res := res || E'PASS T100 AT2.4: at its expiry date an open document is closed once: links revoked, unsent requests and reminders cancelled, the sender told once; finished and cancelled documents are left alone; an expired document cannot be changed\n';
+    else res := res || 'FAIL T100 expiry :: open=' || cnt || ' n=' || n || E'\n'; end if;
+
+    -- AT2.5: a worker takes a batch and dies before finishing it
+    select o.id into oid from public.notification_outbox o where o.idempotency_key = 'expired:' || e10;
+    for i in 1..40 loop
+      perform public.claim_outbox(50, 120);
+      exit when (select o.status from public.notification_outbox o where o.id = oid) = 'sending';
+    end loop;
+    n := 0;
+    perform public.claim_outbox(50, 120);                              -- another worker, while the first one's lease is still held
+    if (select o.attempts from public.notification_outbox o where o.id = oid) <> 1 then n := n + 1; end if;
+    update public.notification_outbox set locked_until = now() - interval '1 minute' where id = oid;  -- the lease runs out
+    perform public.claim_outbox(50, 120);
+    perform public.claim_outbox(50, 120);
+    if (select o.status || '|' || o.attempts from public.notification_outbox o where o.id = oid) <> 'sending|2' then n := n + 1; end if;
+    st := public.finish_outbox(oid, 'sent', null, 'msg-1', null);
+    if st <> 'sent' or public.finish_outbox(oid, 'sent', null, 'msg-2', null) <> 'ignored' then n := n + 1; end if;
+    perform public.claim_outbox(50, 120);
+    if n = 0 and (select count(*) from public.notification_outbox o where o.idempotency_key = 'expired:' || e10 and o.status = 'sent' and o.provider_message_id = 'msg-1' and o.attempts = 2) = 1
+    then res := res || E'PASS T101 AT2.5: an email taken by a worker that then dies is handed out again only after its lease runs out, exactly once; it is neither lost nor sent twice\n';
+    else res := res || 'FAIL T101 outbox crash :: ' || n || E'\n'; end if;
+
+    select o.id into oid from public.notification_outbox o where o.envelope_id = e10 and o.kind = 'signature_request' and o.recipient_id = q2;
+    update public.notification_outbox set status = 'sending', attempts = 4, locked_until = now() + interval '1 minute' where id = oid;
+    st := public.finish_outbox(oid, 'failed', null, null, 'provider refused');
+    select count(*) into cnt from public.notifications q where q.user_id = a and q.kind = 'email_failed' and q.payload ->> 'envelope_id' = e10::text;
+    update public.notification_outbox set status = 'sending', attempts = 5, locked_until = now() + interval '1 minute' where id = oid;
+    st2 := public.finish_outbox(oid, 'failed', null, null, 'provider refused');
+    if st = 'retry' and cnt = 0 and st2 = 'failed'
+       and (select o.status from public.notification_outbox o where o.id = oid) = 'dead'
+       and (select count(*) from public.notifications q where q.user_id = a and q.kind = 'email_failed' and q.payload ->> 'envelope_id' = e10::text) = 1
+    then res := res || E'PASS T102 AT2.5: an email that keeps failing is retried, given up after five attempts, and raises an in-app alert for the sender\n';
+    else res := res || 'FAIL T102 dead letter :: ' || coalesce(st, 'null') || ' then ' || coalesce(st2, 'null') || ' alerts-before=' || cnt || E'\n'; end if;
+    perform set_config('easysign.test_clock', '', true);
+
+    update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
+  end;
+
   -- ---------- storage immutability and freezing (migration role) ----------
   execute 'reset role';
   begin update storage.objects set metadata = '{"size":2}', version = 'v2' where bucket_id = 'originals' and name = obj_path;
@@ -788,6 +905,9 @@ begin
   if (select v2.ok from app_private.audit_verify('env:' || e7) v2) and (select v2.ok from app_private.audit_verify('env:' || e8) v2)
   then res := res || E'PASS T97 the audit chains of the voided and the corrected document verify\n';
   else res := res || E'FAIL T97 void/correct chains\n'; end if;
+  if (select v2.ok from app_private.audit_verify('env:' || e10) v2)
+  then res := res || E'PASS T103 the audit chain of the reminded and expired document verifies\n';
+  else res := res || E'FAIL T103 reminder/expiry chain\n'; end if;
 
   begin
     perform app_private.sanction();

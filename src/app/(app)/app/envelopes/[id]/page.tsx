@@ -45,7 +45,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
 
   const supabase = await createSupabaseServerClient();
   const [{ data: env }, { data: docs }, { data: recipientRows }, { data: fields }, { data: profile }] = await Promise.all([
-    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason').eq('id', id.data).maybeSingle(),
+    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason, expires_at, expired_at, remind_after_days, remind_every_days, remind_max').eq('id', id.data).maybeSingle(),
     supabase.from('envelope_documents').select('id, filename, page_count, size_bytes, sha256').eq('envelope_id', id.data).order('position'),
     supabase.from('recipients').select('id, name, email, role, status, is_sender, routing_order, decline_reason').eq('envelope_id', id.data).order('routing_order').order('created_at'),
     supabase.from('fields').select('id, recipient_id, type, page, x, y, w, h, required').eq('envelope_id', id.data),
@@ -93,6 +93,12 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
         </Notice>
       ) : null}
 
+      {env.status === 'expired' ? (
+        <Notice tone="danger">
+          This document expired{env.expired_at ? ` on ${new Date(env.expired_at as string).toISOString().slice(0, 10)}` : ''} before everyone had finished. Every signing link is switched off and nothing was completed. To try again, create a new document; you can choose a longer time limit when you send it.
+        </Notice>
+      ) : null}
+
       {env.status === 'voided' ? (
         <Notice tone="danger">
           You cancelled this document. {env.void_reason ? `Your reason: “${env.void_reason}”` : 'No reason was recorded.'} Every signing link is switched off and nothing was completed. To try again, create a new document.
@@ -134,6 +140,16 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
             ))}
           </ol>
         )}
+        {isOpen && env.expires_at ? (
+          <p className="mt-4 border-t border-hairline pt-4 text-sm text-ink-body">
+            The signing links stop working on {new Date(env.expires_at as string).toISOString().slice(0, 10)}.{' '}
+            {env.delivery !== 'email'
+              ? 'No reminders: you chose to share the links yourself.'
+              : Number(env.remind_max) > 0
+                ? `People who have not finished are reminded by email after ${env.remind_after_days} day${Number(env.remind_after_days) === 1 ? '' : 's'}, then every ${env.remind_every_days} day${Number(env.remind_every_days) === 1 ? '' : 's'}, up to ${env.remind_max} time${Number(env.remind_max) === 1 ? '' : 's'}.`
+                : 'No reminders will be sent.'}
+          </p>
+        ) : null}
       </section>
 
       <section className="rounded-lg bg-surface p-6 shadow-soft">
