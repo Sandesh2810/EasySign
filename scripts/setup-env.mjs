@@ -19,6 +19,7 @@ export const VARS = [
   ['NOTIFY_MODE', 'Email mode: log | sandbox | live', 'plain', 'log'],
   ['SIGNER_TOKEN_KEY', 'Key that derives signer links', 'generated', ''],
   ['SESSION_COOKIE_KEY', 'Key that signs signer session cookies', 'generated', ''],
+  ['STORAGE_KEY', 'Key that encrypts files kept on server disk', 'generated', ''],
   ['NEXT_PUBLIC_TURNSTILE_SITE_KEY', 'Cloudflare Turnstile site key (leave empty until set up)', 'plain', ''],
   ['TURNSTILE_SECRET_KEY', 'Cloudflare Turnstile secret key (leave empty until set up)', 'secret', ''],
 ];
