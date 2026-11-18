@@ -1,6 +1,10 @@
 // Interactive setup of app\.env.local (gitignored). Run from cmd:  npm run setup:env
+// Easiest way on Windows: double-click "Enter-Supabase-Key.cmd" in the EasySign folder.
 // Secrets are typed here, never into chat. Existing values are kept unless you type a new one.
-// Generated keys (signer-token and session keys) are created once and never shown.
+// Generated keys are created once and never shown.
+//   --only=NAME[,NAME]   ask only for these variables (everything else is kept or defaulted)
+//   --defaults           ask nothing
+//   --set=NAME=value     set a non-secret value from the command line
 import { createInterface } from 'node:readline';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -14,7 +18,7 @@ const file = path.join(root, '.env.local');
 export const VARS = [
   ['NEXT_PUBLIC_SUPABASE_URL', 'Supabase project URL', 'plain', 'https://jwvmviijpdarawrfvzan.supabase.co'],
   ['NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY', 'Supabase publishable key (starts sb_publishable_; safe to expose)', 'plain', ''],
-  ['SUPABASE_SECRET_KEY', 'Supabase SECRET key (Dashboard > Project Settings > API Keys; starts sb_secret_)', 'secret', ''],
+  ['SUPABASE_SECRET_KEY', 'Supabase SECRET key (starts sb_secret_)', 'secret', ''],
   ['APP_URL', 'Base URL of the app', 'plain', 'http://localhost:3000'],
   ['NOTIFY_MODE', 'Email mode: log | sandbox | live', 'plain', 'log'],
   ['SIGNER_TOKEN_KEY', 'Key that derives signer links', 'generated', ''],
@@ -32,37 +36,79 @@ const parse = (text) =>
       .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]),
   );
 
-function ask(rl, question, hidden) {
+// When input is piped (tests, automation) lines are read in order; in a real window keys are read
+// one at a time so a secret is never shown on screen, including when it is pasted.
+let pipedLines = null;
+async function readPipedLine() {
+  if (!pipedLines) {
+    pipedLines = [];
+    for await (const line of createInterface({ input: process.stdin })) pipedLines.push(line);
+  }
+  return (pipedLines.shift() ?? '').trim();
+}
+
+function prompt(question, hidden) {
+  process.stdout.write(question);
+  if (!process.stdin.isTTY) return readPipedLine().then((v) => (process.stdout.write('\n'), v));
   return new Promise((resolve) => {
-    if (!hidden) return rl.question(question, (a) => resolve(a.trim()));
-    const out = rl.output;
-    const orig = rl._writeToOutput;
-    rl.question(question, (a) => {
-      rl._writeToOutput = orig;
-      out.write('\n');
-      resolve(a.trim());
-    });
-    rl._writeToOutput = (s) => {
-      if (s.includes(question)) orig.call(rl, s);
+    const stdin = process.stdin;
+    let buf = '';
+    const finish = () => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.off('data', onData);
+      process.stdout.write(hidden && buf ? `(received ${buf.trim().length} characters, hidden)\n` : '\n');
+      resolve(buf.trim());
     };
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n') return finish();
+        if (ch === '\u0003') {
+          process.stdout.write('\nCancelled. Nothing was changed.\n');
+          process.exit(130);
+        }
+        if (ch === '\u007f' || ch === '\b') {
+          if (buf.length) {
+            buf = buf.slice(0, -1);
+            if (!hidden) process.stdout.write('\b \b');
+          }
+          continue;
+        }
+        if (ch < ' ') continue;
+        buf += ch;
+        if (!hidden) process.stdout.write(ch);
+      }
+    };
+    stdin.setRawMode(true);
+    stdin.setEncoding('utf8');
+    stdin.resume();
+    stdin.on('data', onData);
   });
+}
+
+/** Catch the common mistake of pasting the wrong key. Returns a problem description or null. */
+export function checkSecretKey(value) {
+  if (!value) return null;
+  if (value.startsWith('sb_publishable_')) return 'That is the PUBLISHABLE key. The SECRET key starts with sb_secret_.';
+  if (value.startsWith('sb_secret_') && value.length >= 30) return null;
+  if (value.startsWith('eyJ') && value.split('.').length === 3) return null; // legacy service_role key also works
+  return 'That does not look like a Supabase secret key (it should start with sb_secret_).';
 }
 
 async function main() {
   const current = existsSync(file) ? parse(readFileSync(file, 'utf8')) : {};
-  const flags = Object.fromEntries(
-    process.argv.slice(2).filter((a) => a.startsWith('--set=')).map((a) => a.slice(6).split(/=(.*)/s).slice(0, 2)),
-  );
-  const nonInteractive = process.argv.includes('--defaults');
-  const rl = nonInteractive ? null : createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  const args = process.argv.slice(2);
+  const flags = Object.fromEntries(args.filter((a) => a.startsWith('--set=')).map((a) => a.slice(6).split(/=(.*)/s).slice(0, 2)));
+  const only = args.find((a) => a.startsWith('--only='))?.slice(7).split(',');
+  const askNothing = args.includes('--defaults');
   const next = { ...current };
 
-  console.log('EasySign environment setup. Press Enter to keep the current value.\n');
+  console.log('EasySign environment setup.\n');
   for (const [name, desc, kind, def] of VARS) {
     const has = Boolean(current[name]);
     if (kind === 'generated') {
       if (!has) next[name] = randomBytes(32).toString('base64url');
-      console.log(`${name}: ${has ? 'kept' : 'generated'}`);
+      if (!only) console.log(`${name}: ${has ? 'kept' : 'generated'}`);
       continue;
     }
     if (flags[name] !== undefined) {
@@ -70,16 +116,23 @@ async function main() {
       console.log(`${name}: set from command line`);
       continue;
     }
-    if (nonInteractive) {
+    if (askNothing || (only && !only.includes(name))) {
       if (!has) next[name] = def;
-      console.log(`${name}: ${has ? 'kept' : def ? 'default' : 'empty'}`);
+      if (!only) console.log(`${name}: ${has ? 'kept' : def ? 'default' : 'empty'}`);
       continue;
     }
-    const shown = kind === 'secret' ? (has ? '(set, hidden)' : '(not set)') : current[name] || def || '(empty)';
-    const a = await ask(rl, `${name}\n  ${desc}\n  current: ${shown}\n  new value: `, kind === 'secret');
-    next[name] = a || current[name] || def;
+    const shown = kind === 'secret' ? (has ? '(already set, hidden)' : '(not set)') : current[name] || def || '(empty)';
+    for (;;) {
+      const a = await prompt(`${name}\n  ${desc}\n  current: ${shown}\n  ${kind === 'secret' ? 'Paste the value and press Enter (nothing will appear as you paste): ' : 'New value (Enter keeps the current one): '}`, kind === 'secret');
+      const problem = name === 'SUPABASE_SECRET_KEY' ? checkSecretKey(a) : null;
+      if (problem) {
+        console.log(`  ${problem} Try again, or press Enter to skip.\n`);
+        continue;
+      }
+      next[name] = a || current[name] || def;
+      break;
+    }
   }
-  rl?.close();
 
   const body =
     '# EasySign local environment. NEVER commit this file. Managed by: npm run setup:env\n' +
@@ -87,7 +140,7 @@ async function main() {
     '\n';
   writeFileSync(file, body, { mode: 0o600 });
   const missing = VARS.filter(([n, , k]) => !next[n] && k !== 'generated' && !n.includes('TURNSTILE')).map(([n]) => n);
-  console.log(`\nWrote .env.local (${VARS.length} variables).` + (missing.length ? `\nStill empty: ${missing.join(', ')}` : '\nAll required values present.'));
+  console.log(`\nSaved to app\\.env.local.` + (missing.length ? `\nStill empty: ${missing.join(', ')}` : '\nAll required values are present. You can close this window.'));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

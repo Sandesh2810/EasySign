@@ -18,6 +18,7 @@ const light = {
   ...t.color.light,
   ...t.color.accent,
   'control-border': add['control-border-light'].value,
+  'on-ink': add['on-ink'].light,
   success: add['semantic-success'].light,
   warning: add['semantic-warning'].light,
   danger: add['semantic-danger'].light,
@@ -25,6 +26,7 @@ const light = {
 const dark = {
   ...t.color.dark,
   'control-border': add['control-border-dark'].value,
+  'on-ink': add['on-ink'].dark,
   success: add['semantic-success'].dark,
   warning: add['semantic-warning'].dark,
   danger: add['semantic-danger'].dark,

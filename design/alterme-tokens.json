@@ -133,6 +133,7 @@
     "added": {
       "control-border-light": { "value": "#8a857d", "why": "AlterMe hairline (#e3e0d7) is 1.32:1 on white: fine as a decorative divider, fails the 3:1 needed for input/checkbox borders. #8a857d = 3.66:1 on surface, 3.33:1 on sand." },
       "control-border-dark": { "value": "#6b6f7a", "why": "Dark hairline (#2a2d36) is 1.42:1. #6b6f7a = 3.89:1 on surface, 3.32:1 on raised." },
+      "on-ink": { "light": "#fffcf4", "dark": "#1a1818", "why": "Text on an ink-coloured fill. Ink flips from near-black to cream in dark mode, so its label colour must flip too; using the fixed 'cream' token made primary-button labels invisible in dark mode." },
       "semantic-success": { "light": "#2e7a29", "dark": "#8ed37f", "from": "trait-typical" },
       "semantic-warning": { "light": "#9a5b16", "dark": "#e6b06a", "from": "trait-above" },
       "semantic-danger": { "light": "#a8412c", "dark": "#f09a86", "from": "trait-high" }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PRODUCT_NAME, NO_PHI_NOTICE } from "@/config/brand";
 
 // Placeholder landing page for the Phase 1 toolchain smoke test. Replaced by the real shell in slice 5.
@@ -11,10 +12,13 @@ export default function Home() {
         ready for real documents yet.
       </p>
       <p className="rounded-md border border-hairline bg-surface-sand p-4 text-sm text-ink-body">{NO_PHI_NOTICE}</p>
-      <div>
-        <span className="inline-flex h-11 items-center rounded-pill bg-ink px-6 text-base text-cream">
-          Theme check
-        </span>
+      <div className="flex flex-wrap gap-3">
+        <Link href="/login" className="inline-flex min-h-11 items-center rounded-pill bg-ink px-6 text-base text-on-ink no-underline">
+          Sign in
+        </Link>
+        <Link href="/signup" className="inline-flex min-h-11 items-center rounded-pill border border-control-border px-6 text-base text-ink no-underline">
+          Create an account
+        </Link>
       </div>
     </main>
   );
