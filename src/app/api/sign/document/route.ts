@@ -5,7 +5,7 @@
 import type { NextRequest } from 'next/server';
 import { allow, TOO_MANY } from '@/lib/rate-limit';
 import { json } from '@/lib/request-guard';
-import { loadSignerContext } from '@/lib/signing/session';
+import { loadSignerContext, requestEvidence } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -43,6 +43,10 @@ export async function GET(request: NextRequest) {
     }
     if (part === 'sealed' || part === 'certificate') {
       if (env.status !== 'completed' || !env.sealed_storage_path || !env.certificate_storage_path) return json(404, { error: 'The completed document is not ready yet.' });
+      // written to the audit trail first; if that fails, nothing is served
+      const { ip, ua } = await requestEvidence();
+      const logged = await admin.rpc('record_download', { p_actor: null, p_token_id: ctx.tokenId, p_envelope_id: env.id, p_part: part, p_ip: ip, p_user_agent: ua });
+      if (logged.error) return json(502, { error: 'The file could not be prepared. Try again.' });
       const path = part === 'sealed' ? env.sealed_storage_path : env.certificate_storage_path;
       const bytes = await getStorageFor(env.sealed_storage_backend as Backend).get('sealed', path);
       return send(bytes, 'application/pdf', `attachment; filename="${fileName(env.title, part === 'sealed' ? ' - signed' : ' - certificate')}"`);

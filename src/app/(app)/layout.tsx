@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import { PRODUCT_NAME } from '@/config/brand';
 import { requireUser } from '@/lib/auth/session';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { Button } from '@/components/ui';
 import { signOutAction } from '../(auth)/actions';
 
@@ -13,8 +14,15 @@ export const instant = false;
 // sits behind a Suspense boundary (required with Cache Components); the frame renders instantly.
 async function AccountMenu() {
   const user = await requireUser('/app');
+  // Only decides whether to show the link; the page and its actions check again in the database.
+  const { data: controls } = await (await createSupabaseServerClient()).from('account_controls').select('is_platform_admin').eq('user_id', user.id).maybeSingle();
   return (
     <div className="flex items-center gap-3">
+      {controls?.is_platform_admin ? (
+        <Link href="/app/admin" className="text-sm font-medium text-ink">
+          Accounts
+        </Link>
+      ) : null}
       <span className="hidden text-sm text-ink-muted sm:inline">{user.email}</span>
       <form action={signOutAction}>
         <Button type="submit" variant="outline" className="min-h-10 px-4 text-sm">

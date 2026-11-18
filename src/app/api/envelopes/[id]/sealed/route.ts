@@ -2,7 +2,10 @@
 // Authorisation is row-level security: the lookup runs with the user's own session.
 import type { NextRequest } from 'next/server';
 import { z } from 'zod';
+import { allow, TOO_MANY } from '@/lib/rate-limit';
 import { json, requireApiUser } from '@/lib/request-guard';
+import { requestEvidence } from '@/lib/signing/session';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -21,6 +24,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     .eq('id', id.data)
     .maybeSingle();
   if (!env || env.status !== 'completed' || !env.sealed_storage_path || !env.certificate_storage_path) return json(404, { error: 'Document not found.' });
+
+  // Every download is written to the document's audit trail first; if that fails, nothing is served.
+  if (!(await allow({ bucket: 'download_user', limit: 120, windowSeconds: 3600 }, auth.user.id))) return json(429, { error: TOO_MANY });
+  const { ip, ua } = await requestEvidence();
+  const logged = await supabaseAdmin().rpc('record_download', {
+    p_actor: auth.user.id,
+    p_token_id: null,
+    p_envelope_id: id.data,
+    p_part: certificate ? 'certificate' : 'sealed',
+    p_ip: ip,
+    p_user_agent: ua,
+  });
+  if (logged.error) return json(502, { error: 'The file could not be prepared. Try again.' });
 
   try {
     const bytes = await getStorageFor(env.sealed_storage_backend as Backend).get('sealed', (certificate ? env.certificate_storage_path : env.sealed_storage_path) as string);

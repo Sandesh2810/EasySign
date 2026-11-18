@@ -543,6 +543,45 @@ begin
   then res := res || E'FAIL T40 rate-limit key stored in clear\n';
   else res := res || E'PASS T40 rate-limit keys are stored only as hashes\n'; end if;
 
+  -- ---------- administrator approval and download events (migration 9) ----------
+  update public.account_controls set approved = false where user_id = b;
+  n := 0;
+  begin perform public.admin_list_accounts(a); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.admin_set_approval(a, b, true); n := n + 1; exception when insufficient_privilege then null; end;
+  if n = 0 and not exists (select 1 from public.account_controls k where k.user_id = b and k.approved)
+  then res := res || E'PASS T79 someone who is not an administrator can neither list accounts nor approve one\n';
+  else res := res || 'FAIL T79 non-admin :: ' || n || E'\n'; end if;
+
+  update public.account_controls set is_platform_admin = true where user_id = a;
+  perform public.admin_set_approval(a, b, true);
+  perform public.admin_set_approval(a, b, true); -- repeating it changes nothing
+  select count(*) into n from public.audit_events x where x.chain_key = 'org:' || org_b and x.event_type = 'account_approved' and x.actor_id = a;
+  if n = 1 and exists (select 1 from public.account_controls k where k.user_id = b and k.approved)
+     and exists (select 1 from public.registration_requests q where q.user_id = b and q.status = 'approved' and q.decided_by = a)
+     and (select count(*) from public.admin_list_accounts(a) l where l.account_id in (a, b)) = 2
+  then res := res || E'PASS T80 an administrator approves an account once; who decided is recorded, and it is in that workspace''s audit trail\n';
+  else res := res || 'FAIL T80 approve :: events=' || n || E'\n'; end if;
+
+  n := 0;
+  begin perform public.admin_set_approval(a, a, false); n := n + 1; exception when insufficient_privilege then null; end;
+  perform public.admin_set_approval(a, b, false);
+  if n = 0 and not exists (select 1 from public.account_controls k where k.user_id = b and k.approved)
+     and exists (select 1 from public.registration_requests q where q.user_id = b and q.status = 'rejected')
+  then res := res || E'PASS T81 approval can be taken away again, but not from an administrator account\n';
+  else res := res || 'FAIL T81 un-approve :: ' || n || E'\n'; end if;
+
+  n := 0;
+  begin perform public.record_download(b, null, e4, 'sealed', null, null); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.record_download(a, null, env_a, 'sealed', null, null); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.record_download(null, gen_random_uuid(), e4, 'sealed', null, null); n := n + 1; exception when insufficient_privilege then null; end;
+  perform public.record_download(a, null, e4, 'sealed', '203.0.113.9', 'ua');
+  perform public.record_download(null, (select k.id from public.recipient_tokens k where k.envelope_id = e4 limit 1), e4, 'certificate', '203.0.113.9', 'ua');
+  if n = 0 and (select count(*) from public.audit_events x where x.envelope_id = e4 and x.event_type = 'document_downloaded') = 2
+     and (select v2.ok from app_private.audit_verify('env:' || e4) v2)
+  then res := res || E'PASS T82 downloads of the completed file are recorded for members and signers; outsiders, unfinished documents and made-up links are refused\n';
+  else res := res || 'FAIL T82 downloads :: ' || n || E'\n'; end if;
+  update public.account_controls set is_platform_admin = false where user_id = a;
+
   -- five sample codes for the Node cross-check (same check algorithm on both sides)
   select string_agg(app_private.gen_public_code(), ',') into t from generate_series(1, 5);
   res := res || 'INFO sample codes: ' || t || E'\n';
