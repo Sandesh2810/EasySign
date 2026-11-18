@@ -1,0 +1,3 @@
+#!/bin/sh
+# EasySign pre-commit: block secrets. Runs through the sh bundled with Git for Windows.
+node scripts/secret-scan.mjs || exit 1

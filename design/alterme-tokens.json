@@ -1,0 +1,150 @@
+{
+  "$meta": {
+    "name": "AlterMe theme tokens for EasySign",
+    "source": "https://altermetheme.netlify.app/ (reference supplied by Sandesh; page is branded 'NutriGenomics' but is the AlterMe visual theme)",
+    "extracted": "2026-11-17",
+    "method": "Read from the live page's CSS custom properties (:root / [data-theme=light] / [data-theme=dark]) and computed styles. Nothing invented. Values under 'easysign' are EasySign additions required for WCAG 2.2 AA and are marked as such.",
+    "not_taken": "NutriGenomics name, logo/mark, photography, product copy, trait/health semantics. Only the visual system is reused."
+  },
+  "color": {
+    "light": {
+      "surface": "#ffffff",
+      "surface-sand": "#f5f4ef",
+      "surface-linen": "#e3ded6",
+      "surface-lavender": "#f2f2fc",
+      "surface-raised": "#ffffff",
+      "night": "#0a0b0f",
+      "night-raised": "#1a1818",
+      "cream": "#fffcf4",
+      "ink": "#1a1818",
+      "ink-body": "#373330",
+      "ink-muted": "#5e5a55",
+      "cream-muted": "#c9c4bb",
+      "hairline": "#e3e0d7",
+      "hairline-night": "#34363d",
+      "slate": "#2a373b",
+      "periwinkle": "#7b84dc",
+      "on-periwinkle": "#1a1818",
+      "periwinkle-ink": "#4e57b8",
+      "periwinkle-wash": "#7b84dc1a",
+      "periwinkle-soft": "#c9cdf3",
+      "indigo-deep": "#1d2044",
+      "focus": "#4e57b8",
+      "trait-typical": "#2e7a29",
+      "trait-above": "#9a5b16",
+      "trait-high": "#a8412c"
+    },
+    "dark": {
+      "surface": "#0b0c10",
+      "surface-sand": "#15171d",
+      "surface-linen": "#22252e",
+      "surface-lavender": "#191a2c",
+      "surface-raised": "#1b1e26",
+      "night": "#000000",
+      "night-raised": "#141519",
+      "ink": "#fffcf4",
+      "ink-body": "#d9d4cb",
+      "ink-muted": "#a9a49c",
+      "hairline": "#2a2d36",
+      "slate": "#3b4b50",
+      "periwinkle-ink": "#aeb5f5",
+      "periwinkle-wash": "#7b84dc33",
+      "periwinkle-soft": "#3b4396",
+      "focus": "#aeb5f5",
+      "trait-typical": "#8ed37f",
+      "trait-above": "#e6b06a",
+      "trait-high": "#f09a86"
+    },
+    "accent": {
+      "mint": "#7ad9d2",
+      "sage": "#a7e39e",
+      "lime": "#daee64",
+      "amber": "#cd9854",
+      "orchid": "#bd7bdc",
+      "rose": "#dc7bd2",
+      "rust": "#c25c47",
+      "plum": "#823d5f",
+      "sage-grey": "#7a877c",
+      "kraft": "#c7aa78",
+      "star": "#f7d10c"
+    }
+  },
+  "gradient": {
+    "ring": "linear-gradient(135deg,#7ad9d2,#7b84dc 62%,#bd7bdc)",
+    "cta": "linear-gradient(90deg,#1a1818,#1a1818 35%,#3a3f78)",
+    "night": "radial-gradient(120% 140% at 88% 110%,#3b4396 0%,#1d2044 38%,#0a0b0f 72%)",
+    "dawn": "linear-gradient(109deg,#f5f4ef 25%,#ced8e1 73%,#a09bb9 121%)",
+    "lavender": "linear-gradient(90deg,#f2f2fc,#fff)",
+    "scrim": "linear-gradient(180deg,transparent 40%,rgba(0,0,0,.72))",
+    "glow-periwinkle": "radial-gradient(120% 125% at 98% -1%,rgba(123,132,220,.4) 22%,rgba(123,132,220,0) 100%)",
+    "glow-mint": "radial-gradient(120% 125% at 98% -1%,rgba(122,217,210,.4) 22%,rgba(122,217,210,0) 100%)",
+    "glow-sage": "radial-gradient(120% 125% at 98% -1%,rgba(167,227,158,.4) 22%,rgba(167,227,158,0) 100%)",
+    "glow-plum": "radial-gradient(120% 125% at 98% -1%,rgba(130,61,95,.4) 22%,rgba(130,61,95,0) 100%)"
+  },
+  "space": { "4": "4px", "8": "8px", "12": "12px", "16": "16px", "24": "24px", "32": "32px", "40": "40px", "48": "48px", "64": "64px", "80": "80px", "96": "96px", "128": "128px" },
+  "radius": { "xs": "4px", "sm": "8px", "md": "16px", "lg": "24px", "xl": "40px", "2xl": "64px", "pill": "9999px" },
+  "shadow": {
+    "card": "0 8px 16px 0 rgba(0,0,0,.1)",
+    "float": "0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1)",
+    "soft": "0 2px 12px 0 rgba(30,34,40,.1)",
+    "glass-edge": "inset 0 0 0 1px rgba(255,252,244,.2)"
+  },
+  "blur": { "glass": "20px", "glass-strong": "30px" },
+  "font": {
+    "sans": "\"Hanken Grotesk\",\"Helvetica Neue\",Arial,sans-serif",
+    "serif": "\"EB Garamond\",Garamond,\"Times New Roman\",serif",
+    "mono": "ui-monospace,\"SF Mono\",Menlo,Consolas,monospace",
+    "weights_loaded": { "Hanken Grotesk": [200, 300, 400, 500], "EB Garamond": [300, 400] },
+    "licence_note": "Both families are distributed on Google Fonts under the SIL Open Font License [UNVERIFIED until the OFL files are checked when the fonts are self-hosted in Phase 1]."
+  },
+  "type": {
+    "observed": [
+      { "role": "hero display", "family": "sans", "size": "96px", "weight": 200, "lineHeight": 1.08, "letterSpacing": "-0.015em" },
+      { "role": "section heading (italic serif)", "family": "serif", "style": "italic", "size": "56px", "weight": 300, "lineHeight": 1.15 },
+      { "role": "section heading small", "family": "serif", "size": "48px", "weight": 300, "lineHeight": 1.1 },
+      { "role": "card title (serif)", "family": "serif", "size": "34px", "weight": 300, "lineHeight": 1.1 },
+      { "role": "stat numeral", "family": "sans", "size": "44-54px", "weight": 200, "lineHeight": 1.0 },
+      { "role": "subhead", "family": "sans", "size": "24px", "weight": 400, "lineHeight": 1.25 },
+      { "role": "lead", "family": "sans", "size": "20px", "weight": 300, "lineHeight": 1.5 },
+      { "role": "body", "family": "sans", "size": "18px", "weight": 400, "lineHeight": 1.5 },
+      { "role": "ui / nav / button", "family": "sans", "size": "16px", "weight": 400 },
+      { "role": "eyebrow", "family": "sans", "transform": "uppercase", "tracking": "wide", "size": "small" }
+    ]
+  },
+  "motion": {
+    "duration": { "fast": "150ms", "base": "200ms" },
+    "easing": "cubic-bezier(0.4, 0, 0.2, 1)",
+    "keyframes_observed": ["marquee", "floaty"],
+    "reduced_motion": "Reference honours prefers-reduced-motion; EasySign must too."
+  },
+  "component": {
+    "button-primary-on-dark": { "bg": "cream", "fg": "ink", "radius": "pill", "height": "52px", "paddingX": "32px", "font": "18px/400" },
+    "button-ghost-on-dark": { "bg": "rgba(255,252,244,.06)", "fg": "cream", "border": "1px hairline-night", "radius": "pill", "height": "52px", "paddingX": "32px" },
+    "button-outline-on-light": { "bg": "transparent", "fg": "ink", "border": "1px ink", "radius": "pill" },
+    "button-nav": { "radius": "pill", "height": "40px", "paddingX": "18px", "font": "16px/400" },
+    "chip": { "bg": "periwinkle-wash", "fg": "periwinkle-ink", "radius": "pill" },
+    "card": { "radius": "lg (24px)", "shadow": "soft", "bg": "surface-raised" },
+    "glass-panel": { "bg": "rgba(255,255,255,.72) or rgba(255,252,244,.07) on dark", "backdropBlur": "20px", "edge": "shadow.glass-edge" },
+    "progress-ring": { "stroke": "gradient.ring" },
+    "section-rhythm": "alternating surface / surface-sand / night bands; dark bands use gradient.night"
+  },
+  "easysign": {
+    "$note": "Additions and usage rules needed for WCAG 2.2 AA. These are NOT AlterMe originals. Evidence: node app\\design\\contrast-check.mjs (2026-11-17).",
+    "added": {
+      "control-border-light": { "value": "#8a857d", "why": "AlterMe hairline (#e3e0d7) is 1.32:1 on white: fine as a decorative divider, fails the 3:1 needed for input/checkbox borders. #8a857d = 3.66:1 on surface, 3.33:1 on sand." },
+      "control-border-dark": { "value": "#6b6f7a", "why": "Dark hairline (#2a2d36) is 1.42:1. #6b6f7a = 3.89:1 on surface, 3.32:1 on raised." },
+      "semantic-success": { "light": "#2e7a29", "dark": "#8ed37f", "from": "trait-typical" },
+      "semantic-warning": { "light": "#9a5b16", "dark": "#e6b06a", "from": "trait-above" },
+      "semantic-danger": { "light": "#a8412c", "dark": "#f09a86", "from": "trait-high" }
+    },
+    "usage_rules": [
+      "periwinkle #7b84dc is never used for normal-size text on light surfaces (3.40:1). Use periwinkle-ink #4e57b8 (6.21:1) for links and text; periwinkle is for fills, icons >=24px, rings, and large display text only.",
+      "Text on a periwinkle fill is ink #1a1818 (5.20:1), never white (3.40:1). A solid brand button with white text uses periwinkle-ink #4e57b8 (6.21:1).",
+      "Chips use periwinkle-wash + periwinkle-ink (as in the reference). periwinkle-ink on periwinkle-soft fails (4.00 light / 4.42 dark) so that pairing is not used for text.",
+      "rust #c25c47 and amber #cd9854 are fills/illustration colours only. Error text and destructive buttons use semantic-danger #a8412c (6.07:1 with white).",
+      "hairline is decorative only (dividers, card outlines that are not the sole boundary of a control).",
+      "Weights 200 and 300 are used only at >=20px. Body and UI text is weight 400 minimum; labels 500.",
+      "Signing surface (PDF canvas, field overlays, consent and legal text) is neutral: surface/ink only, no gradients, no glass, no serif italics."
+    ]
+  }
+}
