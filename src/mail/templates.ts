@@ -99,6 +99,39 @@ export function signatureRequestTemplate(v: { signerName: string; senderName: st
 }
 
 /** Tells the sender that a document reached its expiry date before everyone finished. */
+/** The opt-in daily summary: one email listing what happened on the person's documents. */
+export function digestTemplate(v: { name: string; lines: string[]; more: number; openUrl: string }): RenderedEmail {
+  const n = v.lines.length + v.more;
+  const subject = `${PRODUCT_NAME}: ${n} update${n === 1 ? '' : 's'} on your documents`;
+  const more = v.more > 0 ? `And ${v.more} more. Open your notifications to see everything.` : '';
+  return {
+    subject,
+    html: layout({
+      preheader: oneLine(v.lines[0] ?? 'Your daily summary'),
+      heading: 'Your daily summary',
+      paragraphs: [
+        `Hello ${esc(v.name)},`,
+        'This is what happened on your documents since the last summary:',
+        `<ul style="margin:0 0 0 20px;padding:0;">${v.lines.map((l) => `<li style="margin:0 0 8px;">${esc(l)}</li>`).join('')}</ul>`,
+        ...(more ? [esc(more)] : []),
+      ],
+      button: { label: 'Open notifications', url: v.openUrl },
+      footnote: 'You get this summary because you switched it on. You can switch it off on the Notifications page; everything stays visible there either way.',
+    }),
+    text: [
+      `Hello ${v.name},`,
+      '',
+      'This is what happened on your documents since the last summary:',
+      ...v.lines.map((l) => `- ${l}`),
+      ...(more ? ['', more] : []),
+      '',
+      v.openUrl,
+      '',
+      'You get this summary because you switched it on. You can switch it off on the Notifications page.',
+    ].join('\n'),
+  };
+}
+
 export function expiredTemplate(v: { name: string; title: string; openUrl: string }): RenderedEmail {
   const subject = oneLine(`Expired: "${v.title}"`);
   return {

@@ -8,6 +8,8 @@ import { z } from 'zod';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { env } from '@/lib/env';
+import { decide } from '@/lib/email-budget';
+import { loadBudget } from '@/lib/email-budget-state';
 import { safeNext } from '@/lib/safe-redirect';
 import { allow, clientIp, LIMITS_AUTH, TOO_MANY } from '@/lib/rate-limit';
 import { getMailProvider } from '@/mail';
@@ -44,6 +46,15 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
   const ip = await clientIp();
   if (!(await allow(LIMITS_AUTH.signupPerIp, ip)) || !(await allow(LIMITS_AUTH.signupPerEmail, address))) return { ok: false, message: TOO_MANY };
 
+  // Sign-up emails count against the same daily email budget as everything else (they have their own
+  // reserved share, and may spill into the rest). If the whole day is used up, say so before creating an
+  // account that could not be confirmed.
+  const budget = await loadBudget(null).catch(() => null);
+  if (!budget) return { ok: false, message: 'Something went wrong on our side. Please try again in a minute.' };
+  if (decide('P0_AUTH', budget.state).action === 'defer') {
+    return { ok: false, message: 'We cannot send confirmation emails right now because today’s email limit has been reached. Please try again tomorrow.' };
+  }
+
   const { data, error } = await supabaseAdmin().auth.admin.generateLink({
     type: 'signup',
     email: address,
@@ -64,6 +75,9 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
   const confirmUrl = `${env.appUrl()}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=signup`;
   const mail = verifyEmailTemplate({ name, confirmUrl });
   await getMailProvider().send({ to: address, kind: 'auth_verify', ...mail, idempotencyKey: `auth_verify:${data.user.id}:${data.properties.hashed_token.slice(0, 16)}` });
+  // counted after the provider accepted it, so the meter matches what was really handed over
+  const counted = await supabaseAdmin().rpc('email_budget_record', { p_class: 'P0_AUTH', p_user: null, p_restricted: false });
+  if (counted.error) console.error('email budget: a sign-up email was sent but could not be counted');
   return isLocalDevelopment() ? { ok: true, message: SIGNUP_DONE_LOCAL, devConfirmUrl: confirmUrl } : { ok: true, message: SIGNUP_DONE };
 }
 

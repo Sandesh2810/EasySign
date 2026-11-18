@@ -112,6 +112,32 @@ export function record(s: BudgetState, event: EmailClass | 'PROVIDER_DAILY_LIMIT
   };
 }
 
+export type AllowanceLimit = 'day' | 'month' | 'new-accounts' | 'you';
+
+/**
+ * How many more emails of one class this sender could have sent right now, and what is holding the
+ * number down. It agrees with decide(): the count is above zero exactly when decide() says "send".
+ */
+export function allowanceFor(
+  cls: Exclude<EmailClass, 'P0_AUTH'>,
+  s: BudgetState,
+  cfg: BudgetConfig = DEFAULT_BUDGET,
+  opts: SendOptions = {},
+): { left: number; limitedBy: AllowanceLimit } {
+  const p = pools(s, cfg);
+  if (s.providerClosed) return { left: 0, limitedBy: 'day' };
+  if (p.dailyAllowance <= 0) return { left: 0, limitedBy: 'month' };
+  const candidates: [AllowanceLimit, number][] = [
+    ['day', Math.floor(p.sharedPool * cfg.cutoffs[cls]) - p.sharedUsed],
+    ['month', p.monthLeftForShared],
+    ['you', cfg.perUserDaily - (opts.userSentToday ?? 0)],
+  ];
+  if (opts.restrictedSender) candidates.push(['new-accounts', cfg.restrictedPoolDaily - s.restrictedSentToday]);
+  // the tightest limit wins; on a tie the earlier entry (the more general limit) is named
+  const [limitedBy, left] = candidates.reduce((a, b) => (b[1] < a[1] ? b : a));
+  return { left: Math.max(0, left), limitedBy };
+}
+
 export interface Meter {
   dailyAllowance: number;
   authReserve: number;

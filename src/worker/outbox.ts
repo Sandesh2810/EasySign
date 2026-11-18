@@ -2,31 +2,15 @@
 // after the Email Budget Manager (src/lib/email-budget.ts, D-27) says the message may go today.
 // Outbox rows never contain a signing link: the link is derived here, in memory, at send time (D-21).
 import { env } from '@/lib/env';
-import { decide, nextUtcMidnight, type BudgetState, type EmailClass } from '@/lib/email-budget';
+import { loadBudget } from '@/lib/email-budget-state';
+import { describeNotification } from '@/lib/notifications';
 import { byteaToBuffer, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
-import { completionTemplate, declinedTemplate, expiredTemplate, signatureRequestTemplate, voidedTemplate, type RenderedEmail, type RequestPurpose } from '@/mail/templates';
-import { MailQuotaError, type MailAttachment } from '@/mail/types';
+import { completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
+import { drainOutbox, type OutboxDeps, type OutboxRow, type Prepared } from './dispatch';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
-
-interface OutboxRow {
-  id: string;
-  envelope_id: string | null;
-  recipient_id: string | null;
-  to_user_id: string | null;
-  sender_user_id: string | null;
-  kind: string;
-  priority: EmailClass;
-  idempotency_key: string;
-}
-
-interface Prepared {
-  to: string;
-  email: RenderedEmail;
-  attachments?: MailAttachment[];
-}
 
 /** Outbox kinds that carry a personal link, and what the recipient is asked to do. */
 const REQUEST_PURPOSE: Record<string, RequestPurpose> = { signature_request: 'sign', approval_request: 'approve', view_notice: 'view' };
@@ -41,8 +25,36 @@ async function userEmail(userId: string): Promise<{ email: string; name: string 
   return { email, name: (profile?.display_name as string | undefined) || email };
 }
 
+const DIGEST_MAX_LINES = 40;
+
+async function prepareDigest(row: OutboxRow): Promise<Prepared> {
+  const db = supabaseAdmin();
+  if (!row.to_user_id) throw new Error('digest without a person');
+  const from = typeof row.payload?.from === 'string' ? row.payload.from : null;
+  const until = typeof row.payload?.to === 'string' ? row.payload.to : null;
+  if (!from || !until) throw new Error('digest without a period');
+  const [to, { data: notices, count }] = await Promise.all([
+    userEmail(row.to_user_id),
+    db
+      .from('notifications')
+      .select('kind, payload, created_at', { count: 'exact' })
+      .eq('user_id', row.to_user_id)
+      .gt('created_at', from)
+      .lte('created_at', until)
+      .order('created_at', { ascending: true })
+      .limit(DIGEST_MAX_LINES),
+  ]);
+  const lines = (notices ?? []).map((n) => describeNotification(n.kind as string, n.payload).text);
+  if (lines.length === 0) throw new Error('nothing to report');
+  return {
+    to: to.email,
+    email: digestTemplate({ name: to.name, lines, more: Math.max(0, (count ?? lines.length) - lines.length), openUrl: `${env.appUrl()}/app/notifications` }),
+  };
+}
+
 async function prepare(row: OutboxRow): Promise<Prepared> {
   const db = supabaseAdmin();
+  if (row.kind === 'digest') return prepareDigest(row);
   if (!row.envelope_id) throw new Error(`unsupported email kind ${row.kind}`);
   const { data: envelope } = await db
     .from('envelopes')
@@ -139,75 +151,35 @@ async function prepare(row: OutboxRow): Promise<Prepared> {
   throw new Error(`unsupported email kind ${row.kind}`);
 }
 
-async function budgetFor(senderId: string | null): Promise<{ state: BudgetState; userSentToday: number; restricted: boolean }> {
+function liveDeps(): OutboxDeps {
   const db = supabaseAdmin();
-  const [state, control] = await Promise.all([
-    db.rpc('email_budget_state', { p_user: senderId }),
-    senderId ? db.from('account_controls').select('trust_level').eq('user_id', senderId).maybeSingle() : Promise.resolve({ data: null }),
-  ]);
-  const s = Array.isArray(state.data) ? state.data[0] : null;
-  if (state.error || !s) throw new Error('email budget unavailable');
   return {
-    state: {
-      sentTodayAuth: s.sent_today_auth,
-      sentTodayShared: s.sent_today_shared,
-      sentMonthBeforeToday: s.sent_month_before_today,
-      daysLeftInMonth: s.days_left_in_month,
-      restrictedSentToday: s.restricted_sent_today,
-      providerClosed: s.provider_closed,
+    async claim() {
+      const claim = await db.rpc('claim_outbox', { p_limit: 10, p_lease_seconds: 120 });
+      if (claim.error) throw new Error(`claim_outbox: ${claim.error.message}`);
+      return (claim.data ?? []) as OutboxRow[];
     },
-    userSentToday: s.user_sent_today ?? 0,
-    restricted: (control.data?.trust_level as string | undefined) === 'restricted',
+    async finish(id, outcome, extra = {}) {
+      const res = await db.rpc('finish_outbox', {
+        p_id: id,
+        p_outcome: outcome,
+        p_not_before: extra.notBefore?.toISOString() ?? null,
+        p_provider_message_id: extra.messageId ?? null,
+        p_error: extra.error ?? null,
+      });
+      return (res.data as string | null) ?? res.error?.message ?? 'unknown';
+    },
+    budget: loadBudget,
+    prepare,
+    send: (message) => getMailProvider().send(message),
+    async closeDay() {
+      await db.rpc('email_budget_close_day');
+    },
+    now: () => new Date(),
   };
 }
 
-/** Claims a batch and works through it in priority order. Returns how many rows were handled. */
+/** Claims a batch from the database and sends what the budget allows. */
 export async function runOutbox(log: (msg: string) => void): Promise<number> {
-  const db = supabaseAdmin();
-  const claim = await db.rpc('claim_outbox', { p_limit: 10, p_lease_seconds: 120 });
-  if (claim.error) throw new Error(`claim_outbox: ${claim.error.message}`);
-  const rows = (claim.data ?? []) as OutboxRow[];
-  const finish = async (id: string, outcome: 'sent' | 'deferred' | 'failed', extra: { notBefore?: Date; messageId?: string; error?: string } = {}) => {
-    const res = await db.rpc('finish_outbox', {
-      p_id: id,
-      p_outcome: outcome,
-      p_not_before: extra.notBefore?.toISOString() ?? null,
-      p_provider_message_id: extra.messageId ?? null,
-      p_error: extra.error ?? null,
-    });
-    return (res.data as string | null) ?? res.error?.message ?? 'unknown';
-  };
-
-  for (const row of rows) {
-    try {
-      const budget = await budgetFor(row.sender_user_id);
-      const verdict = decide(row.priority, budget.state, undefined, { restrictedSender: budget.restricted, userSentToday: budget.userSentToday });
-      if (verdict.action === 'defer') {
-        log(`email ${row.kind} ${row.id}: ${await finish(row.id, 'deferred', { notBefore: verdict.notBefore, error: verdict.reason })} (budget)`);
-        continue;
-      }
-      const prepared = await prepare(row);
-      const sent = await getMailProvider().send({
-        to: prepared.to,
-        kind: row.kind,
-        subject: prepared.email.subject,
-        html: prepared.email.html,
-        text: prepared.email.text,
-        attachments: prepared.attachments,
-        idempotencyKey: row.idempotency_key,
-      });
-      await db.rpc('email_budget_record', { p_class: row.priority, p_user: row.sender_user_id, p_restricted: budget.restricted });
-      log(`email ${row.kind} ${row.id}: ${await finish(row.id, 'sent', { messageId: sent.id })}`);
-    } catch (e) {
-      if (e instanceof MailQuotaError) {
-        await db.rpc('email_budget_close_day');
-        log(`email ${row.kind} ${row.id}: ${await finish(row.id, 'deferred', { notBefore: nextUtcMidnight(new Date()), error: 'provider quota reached' })} (provider quota)`);
-        continue;
-      }
-      // the error text may describe a person or a document, so only its message is stored, never a link
-      const message = e instanceof Error ? e.message : 'unknown error';
-      log(`email ${row.kind} ${row.id}: ${await finish(row.id, 'failed', { error: message })} (${message})`);
-    }
-  }
-  return rows.length;
+  return drainOutbox(liveDeps(), log);
 }

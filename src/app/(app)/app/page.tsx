@@ -5,6 +5,7 @@ import { requireUser } from '@/lib/auth/session';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { Notice } from '@/components/ui';
 import { StatusChip } from '@/components/status-chip';
+import { EmailMeter } from '@/components/email-meter';
 import { NO_PHI_NOTICE } from '@/config/brand';
 
 export const metadata: Metadata = { title: 'Dashboard' };
@@ -50,6 +51,8 @@ async function Dashboard() {
         </Notice>
       ) : null}
       {controls?.trust_level === 'suspended' ? <Notice tone="danger">This account is suspended. Contact the administrator.</Notice> : null}
+
+      <EmailMeter userId={user.id} />
 
       <section className="rounded-lg bg-surface shadow-soft">
         <h2 className="border-b border-hairline px-6 py-4 text-base font-medium text-ink">Documents</h2>

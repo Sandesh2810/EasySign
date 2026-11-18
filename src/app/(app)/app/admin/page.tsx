@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ApprovalForm } from './approval-form';
+import { EmailPanel } from './email-panel';
 
 export const metadata: Metadata = { title: 'Accounts' };
 
@@ -91,6 +92,7 @@ async function Accounts() {
           </tbody>
         </table>
       </section>
+      <EmailPanel adminId={user.id} />
     </div>
   );
 }

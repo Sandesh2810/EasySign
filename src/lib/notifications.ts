@@ -1,0 +1,68 @@
+// In-app notices: one place that turns a stored notice (kind + small payload) into words.
+// Used by the Notifications page and by the daily digest email, so both always say the same thing.
+// Pure: no I/O. Values from people (names, titles) are returned as plain text; the caller escapes them.
+
+export interface NoticeView {
+  text: string;
+  /** Where "open" should lead, inside the app; null when there is nothing to open. */
+  path: string | null;
+  tone: 'good' | 'info' | 'attention';
+}
+
+const EMAIL_LABEL: Record<string, string> = {
+  signature_request: 'the request to sign',
+  approval_request: 'the request to approve',
+  view_notice: 'the notice to read',
+  reminder: 'a reminder',
+  completion_copy: 'a copy of the completed document',
+  completion_sender: 'your copy of the completed document',
+  declined_sender: 'the notice that it was declined',
+  voided_notice: 'the notice that it was cancelled',
+  expired_sender: 'the notice that it expired',
+  digest: 'your daily summary',
+};
+
+const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max) : '');
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function describeNotification(kind: string, payload: unknown): NoticeView {
+  const p = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
+  const id = str(p.envelope_id, 40);
+  const path = UUID.test(id) ? `/app/envelopes/${id}` : null;
+  const title = str(p.title) ? `"${str(p.title)}"` : 'a document';
+  const by = str(p.by, 120) || 'Someone';
+  const email = EMAIL_LABEL[str(p.kind, 40)] ?? 'an email';
+
+  switch (kind) {
+    case 'recipient_signed':
+      return { text: `${by} signed ${title}.`, path, tone: 'good' };
+    case 'recipient_approved':
+      return { text: `${by} approved ${title}.`, path, tone: 'good' };
+    case 'envelope_completed':
+      return { text: `${title} is complete. Everyone has finished and the sealed copy is ready to download.`, path, tone: 'good' };
+    case 'envelope_declined':
+      return { text: `${by} declined ${title}. The document is closed and nobody else can sign it.`, path, tone: 'attention' };
+    case 'envelope_expired':
+      return { text: `${title} expired before everyone had finished. Its signing links no longer work.`, path, tone: 'attention' };
+    case 'sealing_failed':
+      return { text: `The final sealed copy of ${title} could not be produced. Contact the administrator.`, path, tone: 'attention' };
+    case 'email_failed':
+      return {
+        text: `An email could not be delivered after several attempts (${email}). Open the document to send it again or to copy the link and share it yourself.`,
+        path,
+        tone: 'attention',
+      };
+    case 'email_deferred':
+      return {
+        text: `Today's email allowance is used up, so ${email} for ${title} will go out after the daily reset. If it is urgent, open the document, copy the link and share it yourself.`,
+        path,
+        tone: 'attention',
+      };
+    case 'account_approved':
+      return { text: 'Your account was approved. You can now send documents to other people.', path: null, tone: 'good' };
+    case 'account_approval_removed':
+      return { text: 'Approval for your account was removed. You can still prepare documents and sign them yourself.', path: null, tone: 'attention' };
+    default:
+      return { text: 'There is an update on your account.', path, tone: 'info' };
+  }
+}

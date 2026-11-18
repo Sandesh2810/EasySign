@@ -862,6 +862,142 @@ begin
     update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
   end;
 
+  -- ---------- notifications and the email budget (migration 14: slice 6), as the service role ----------
+  declare
+    e11 uuid; d11 uuid; boss uuid; sg uuid; me uuid; o_boss uuid; o_sg uuid; st text; st2 text; cnt int; cnt2 int;
+    t_boss uuid := gen_random_uuid(); t_sg uuid := gen_random_uuid(); t_me uuid := gen_random_uuid();
+    h_boss text := repeat('e1', 32); h_sg text := repeat('e2', 32); h_me text := repeat('e3', 32);
+    before_s record; after_s record; again_s record;
+  begin
+    update public.account_controls set approved = true, daily_recipient_cap = 50, daily_envelope_cap = 50 where user_id = a;
+    select e.id into e11 from public.create_envelope(a, org_a, 'Notice test', folder_a) e;
+    select d.id into d11 from public.add_envelope_document(a, e11, 'f.pdf', 'supabase', org_a || '/' || e11 || '/d1', repeat('b1', 32), 1, 900, '[]', 'pdf') d;
+    perform public.save_recipients(a, e11, '[{"name":"N Boss","email":"n-boss@example.test","role":"approver","routing_order":1},{"name":"N Signer","email":"n-signer@example.test","role":"signer","routing_order":1},{"name":"Alice Test","email":"rls-a@example.test","role":"signer","routing_order":1}]');
+    select x.id into boss from public.recipients x where x.envelope_id = e11 and x.email = 'n-boss@example.test';
+    select x.id into sg from public.recipients x where x.envelope_id = e11 and x.email = 'n-signer@example.test';
+    select x.id into me from public.recipients x where x.envelope_id = e11 and x.email = 'rls-a@example.test';
+    perform public.save_fields(a, e11, jsonb_build_array(
+      jsonb_build_object('document_id', d11, 'recipient_id', sg, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.5, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d11, 'recipient_id', me, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.6, 'w', 0.3, 'h', 0.07)));
+    perform public.set_routing_mode(a, e11, 'parallel');
+    perform public.send_envelope(a, e11, jsonb_build_array(
+      jsonb_build_object('recipient_id', boss, 'token_id', t_boss, 'nonce', repeat('31', 16), 'token_sha256', h_boss),
+      jsonb_build_object('recipient_id', sg, 'token_id', t_sg, 'nonce', repeat('32', 16), 'token_sha256', h_sg),
+      jsonb_build_object('recipient_id', me, 'token_id', t_me, 'nonce', repeat('33', 16), 'token_sha256', h_me)), now() + interval '30 days', 'email');
+    select o.id into o_boss from public.notification_outbox o where o.envelope_id = e11 and o.recipient_id = boss and o.kind = 'approval_request';
+    select o.id into o_sg from public.notification_outbox o where o.envelope_id = e11 and o.recipient_id = sg and o.kind = 'signature_request';
+
+    -- T105: "sent" and the budget in one step, exactly once
+    select * into before_s from public.email_budget_state(a);
+    update public.notification_outbox set status = 'sending', attempts = 1, locked_until = now() + interval '1 minute' where id = o_boss;
+    st := public.finish_outbox(o_boss, 'sent', null, 'msg-b1', null);
+    select * into after_s from public.email_budget_state(a);
+    st2 := public.finish_outbox(o_boss, 'sent', null, 'msg-b2', null);
+    select * into again_s from public.email_budget_state(a);
+    if o_boss is not null and st = 'sent' and st2 = 'ignored'
+       and after_s.sent_today_shared = before_s.sent_today_shared + 1 and after_s.user_sent_today = before_s.user_sent_today + 1
+       and after_s.restricted_sent_today = before_s.restricted_sent_today + 1 and after_s.sent_today_auth = before_s.sent_today_auth
+       and again_s.sent_today_shared = after_s.sent_today_shared and again_s.user_sent_today = after_s.user_sent_today
+       and (select o.status || '|' || o.provider_message_id from public.notification_outbox o where o.id = o_boss) = 'sent|msg-b1'
+       and (select k.trust_level from public.account_controls k where k.user_id = a) = 'restricted'
+    then res := res || E'PASS T105 marking an email as sent and counting it against the email budget happen in one step: counted once for the day, the sender and the new-account pool, and not again when the same email is reported sent twice\n';
+    else res := res || 'FAIL T105 one-step budget :: ' || coalesce(st, 'null') || ' ' || coalesce(st2, 'null') || ' shared ' || before_s.sent_today_shared || '>' || after_s.sent_today_shared || '>' || again_s.sent_today_shared || E'\n'; end if;
+
+    -- T106: an email that has to wait for tomorrow is not counted, is kept, and the sender is told once per document per day
+    update public.notification_outbox set status = 'sending', attempts = 1, locked_until = now() + interval '1 minute' where id = o_sg;
+    st := public.finish_outbox(o_sg, 'deferred', now() + interval '8 hours', null, 'Email limit reached for today.');
+    select count(*) into cnt from public.notifications q where q.user_id = a and q.kind = 'email_deferred' and q.payload ->> 'envelope_id' = e11::text;
+    update public.notification_outbox set status = 'sending', attempts = 1, locked_until = now() + interval '1 minute' where id = o_sg;
+    st2 := public.finish_outbox(o_sg, 'deferred', now() + interval '8 hours', null, 'Email limit reached for today.');
+    select * into after_s from public.email_budget_state(a);
+    if st = 'deferred' and st2 = 'deferred' and cnt = 1
+       and (select count(*) from public.notifications q where q.user_id = a and q.kind = 'email_deferred' and q.payload ->> 'envelope_id' = e11::text) = 1
+       and (select q.payload ->> 'title' from public.notifications q where q.user_id = a and q.kind = 'email_deferred' and q.payload ->> 'envelope_id' = e11::text) = 'Notice test'
+       and after_s.sent_today_shared = again_s.sent_today_shared
+       and (select o.status || '|' || o.attempts || '|' || (o.not_before > now())::text from public.notification_outbox o where o.id = o_sg) = 'deferred|0|true'
+    then res := res || E'PASS T106 an email that must wait for the next day is kept, is not counted, and the sender gets one in-app notice per document per day\n';
+    else res := res || 'FAIL T106 deferral notice :: ' || coalesce(st, 'null') || ' ' || coalesce(st2, 'null') || ' notices=' || cnt || E'\n'; end if;
+
+    -- T107: in-app progress notices for the sender (signed, approved), but not for the sender's own signature
+    perform public.signer_open(h_boss, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_boss, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_approve(t_boss, '203.0.113.9', 'ua');
+    perform public.signer_open(h_sg, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_sg, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_sg, 'signature', 'drawn', 'supabase', org_a || '/' || e11 || '/sig-sg.png', repeat('7a', 32), null, null, '203.0.113.9', 'ua');
+    perform public.signer_complete(t_sg, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+    select count(*) into cnt from public.notifications q where q.user_id = a and q.payload ->> 'envelope_id' = e11::text and q.kind in ('recipient_signed', 'recipient_approved');
+    perform public.signer_open(h_me, '203.0.113.9', 'ua');
+    perform public.signer_consent(t_me, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_adopt_signature(t_me, 'signature', 'drawn', 'supabase', org_a || '/' || e11 || '/sig-me.png', repeat('7b', 32), null, null, '203.0.113.9', 'ua');
+    perform public.signer_complete(t_me, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
+    if cnt = 2
+       and (select count(*) from public.notifications q where q.user_id = a and q.payload ->> 'envelope_id' = e11::text and q.kind = 'recipient_approved' and q.payload ->> 'by' = 'N Boss' and q.read_at is null) = 1
+       and (select count(*) from public.notifications q where q.user_id = a and q.payload ->> 'envelope_id' = e11::text and q.kind = 'recipient_signed' and q.payload ->> 'by' = 'N Signer') = 1
+       and (select count(*) from public.notifications q where q.user_id = a and q.payload ->> 'envelope_id' = e11::text and q.kind in ('recipient_signed', 'recipient_approved')) = 2
+       and (select x.status from public.recipients x where x.id = me) = 'signed'
+       and not exists (select 1 from public.notifications q where q.user_id = b and q.payload ->> 'envelope_id' = e11::text)
+       and not exists (select 1 from public.notification_outbox o where o.envelope_id = e11 and o.kind in ('recipient_signed', 'recipient_approved'))
+    then res := res || E'PASS T107 the sender gets an in-app notice (and no email) when someone approves or signs, exactly one each, and none for their own signature\n';
+    else res := res || 'FAIL T107 progress notices :: ' || cnt || E'\n'; end if;
+
+    -- T108: daily digest, opt-in, at most one a day, only when there is something to report
+    cnt := public.queue_digests(now());                                  -- nobody has opted in
+    perform public.set_digest_opt_in(a, true);
+    cnt := cnt + public.queue_digests(now());                            -- too soon: the first digest comes a day later
+    n := 0;
+    begin perform public.queue_digests(now() + interval '25 hours'); n := n + 1; exception when invalid_parameter_value then null; end;  -- a future time needs the test flag
+    begin perform public.set_digest_opt_in(gen_random_uuid(), true); n := n + 1; exception when insufficient_privilege then null; end;
+    perform set_config('easysign.test_clock', 'on', true);
+    cnt := cnt + public.queue_digests(now() + interval '25 hours');       -- nothing happened since opting in
+    insert into public.notifications (org_id, user_id, kind, payload, created_at)
+      values (org_a, a, 'recipient_signed', jsonb_build_object('envelope_id', e11, 'title', 'Notice test', 'by', 'Later Person'), now() + interval '30 hours');
+    cnt2 := public.queue_digests(now() + interval '50 hours');
+    cnt2 := cnt2 + public.queue_digests(now() + interval '50 hours');     -- the same moment again
+    cnt2 := cnt2 + public.queue_digests(now() + interval '60 hours');     -- less than a day later
+    perform public.set_digest_opt_in(a, false);
+    insert into public.notifications (org_id, user_id, kind, payload, created_at)
+      values (org_a, a, 'recipient_signed', jsonb_build_object('envelope_id', e11, 'title', 'Notice test', 'by', 'After Opt Out'), now() + interval '70 hours');
+    cnt2 := cnt2 + public.queue_digests(now() + interval '100 hours');    -- opted out
+    perform set_config('easysign.test_clock', '', true);
+    if cnt = 0 and n = 0 and cnt2 = 1
+       and (select count(*) from public.notification_outbox o where o.kind = 'digest' and o.to_user_id = a) = 1
+       and (select o.priority || '|' || o.status || '|' || (o.envelope_id is null)::text || '|' || (o.sender_user_id = a)::text
+              from public.notification_outbox o where o.kind = 'digest' and o.to_user_id = a) = 'P3|queued|true|true'
+       and (select (o.payload ->> 'from')::timestamptz = now() + interval '25 hours' and (o.payload ->> 'to')::timestamptz = now() + interval '50 hours'
+              from public.notification_outbox o where o.kind = 'digest' and o.to_user_id = a)
+       and not exists (select 1 from public.notification_outbox o where o.kind = 'digest' and o.to_user_id = b)
+       and (select p.digest_opt_in::text || '|' || (p.digest_through is null)::text from public.profiles p where p.id = a) = 'false|true'
+    then res := res || E'PASS T108 the daily digest is opt-in, lowest email class, queued at most once a day and only when there is something to report, covers only what happened since the last one, and stops on opting out\n';
+    else res := res || 'FAIL T108 digest :: early=' || cnt || ' n=' || n || ' queued=' || cnt2 || E'\n'; end if;
+
+    -- T109: the queue overview is for the administrator only
+    n := 0;
+    begin perform public.admin_email_overview(a); n := n + 1; exception when insufficient_privilege then null; end;
+    update public.account_controls set is_platform_admin = true where user_id = a;
+    select ov.deferred into cnt from public.admin_email_overview(a) ov;
+    select ov.sent_today into cnt2 from public.admin_email_overview(a) ov;
+    update public.account_controls set is_platform_admin = false where user_id = a;
+    if n = 0 and cnt >= 1 and cnt2 >= 1
+    then res := res || E'PASS T109 only an administrator can read the email queue overview, and it counts waiting and sent emails\n';
+    else res := res || 'FAIL T109 queue overview :: n=' || n || ' deferred=' || coalesce(cnt, -1) || ' sent=' || coalesce(cnt2, -1) || E'\n'; end if;
+
+    -- T110: the new functions are server-only, and the digest choice cannot be written directly
+    n := 0;
+    foreach t in array array['public.finish_outbox(uuid, text, timestamptz, text, text)', 'public.set_digest_opt_in(uuid, boolean)',
+                             'public.queue_digests(timestamptz)', 'public.admin_email_overview(uuid)', 'app_private.notify_sender_progress()'] loop
+      if has_function_privilege('authenticated', t, 'execute') or has_function_privilege('anon', t, 'execute') then n := n + 1; end if;
+    end loop;
+    if has_function_privilege('service_role', 'app_private.notify_sender_progress()', 'execute') then n := n + 1; end if;
+    if has_column_privilege('authenticated', 'public.profiles', 'digest_opt_in', 'update') or has_column_privilege('authenticated', 'public.profiles', 'digest_through', 'update')
+       or has_table_privilege('authenticated', 'public.notifications', 'insert') or has_table_privilege('authenticated', 'public.notifications', 'delete') then n := n + 1; end if;
+    if n = 0
+    then res := res || E'PASS T110 the notification and digest functions are server-only; a signed-in user cannot switch the digest directly, nor create or delete notices\n';
+    else res := res || 'FAIL T110 server-only :: ' || n || E'\n'; end if;
+
+    update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
+  end;
+
   -- ---------- storage immutability and freezing (migration role) ----------
   execute 'reset role';
   begin update storage.objects set metadata = '{"size":2}', version = 'v2' where bucket_id = 'originals' and name = obj_path;

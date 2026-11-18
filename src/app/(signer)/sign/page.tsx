@@ -107,9 +107,10 @@ async function Sign() {
           ))}
         </div>
         <ConsentForm signerName={recipient.name} />
-        <p className="mt-6">
+        {/* a div, not a paragraph: the control carries its own dialog, which may not sit inside a <p> */}
+        <div className="mt-6">
           <DeclineControl variant="quiet" label="Decline this document instead" />
-        </p>
+        </div>
       </div>
     );
   }

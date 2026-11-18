@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_BUDGET, decide, meter, nextUtcMidnight, emptyState, record, type BudgetState, type EmailClass } from './email-budget';
+import fc from 'fast-check';
+import { DEFAULT_BUDGET, allowanceFor, decide, meter, nextUtcMidnight, emptyState, record, type BudgetState, type EmailClass } from './email-budget';
 
 const day = (over: Partial<BudgetState> = {}): BudgetState => ({ ...emptyState(15), ...over });
 const send = (s: BudgetState, cls: EmailClass, opts = {}) => {
@@ -136,6 +137,42 @@ describe('email budget manager', () => {
     expect(m).toMatchObject({ sharedPool: 85, sharedLeft: 25, authLeft: 12, low: true, usedToday: 63 });
     expect(m.resetsAt.toISOString()).toBe('2026-11-18T00:00:00.000Z');
     expect(meter(day(), DEFAULT_BUDGET).low).toBe(false);
+  });
+
+  it('the allowance shown to a sender names the limit that binds them', () => {
+    expect(allowanceFor('P0_REQUEST', day())).toEqual({ left: 40, limitedBy: 'you' });
+    expect(allowanceFor('P0_REQUEST', day(), DEFAULT_BUDGET, { restrictedSender: true })).toEqual({ left: 30, limitedBy: 'new-accounts' });
+    expect(allowanceFor('P0_REQUEST', day({ sentTodayShared: 70 }), DEFAULT_BUDGET, { userSentToday: 5 })).toEqual({ left: 15, limitedBy: 'day' });
+    expect(allowanceFor('P1', day({ sentTodayShared: 70 }))).toEqual({ left: 6, limitedBy: 'day' });
+    expect(allowanceFor('P3', day({ sentTodayShared: 70 }))).toEqual({ left: 0, limitedBy: 'day' });
+    expect(allowanceFor('P0_REQUEST', day({ sentTodayShared: 10, restrictedSentToday: 30 }), DEFAULT_BUDGET, { restrictedSender: true })).toEqual({ left: 0, limitedBy: 'new-accounts' });
+    expect(allowanceFor('P0_REQUEST', record(day(), 'PROVIDER_DAILY_LIMIT'))).toEqual({ left: 0, limitedBy: 'day' });
+    expect(allowanceFor('P0_REQUEST', day({ sentMonthBeforeToday: 3000 }))).toEqual({ left: 0, limitedBy: 'month' });
+  });
+
+  it('property: the allowance is above zero exactly when the budget manager would send', () => {
+    fc.assert(
+      fc.property(
+        fc.record({
+          sentTodayAuth: fc.integer({ min: 0, max: 40 }),
+          sentTodayShared: fc.integer({ min: 0, max: 110 }),
+          sentMonthBeforeToday: fc.integer({ min: 0, max: 3100 }),
+          daysLeftInMonth: fc.integer({ min: 1, max: 31 }),
+          restrictedSentToday: fc.integer({ min: 0, max: 40 }),
+          providerClosed: fc.boolean(),
+        }),
+        fc.constantFrom('P0_REQUEST', 'P1', 'P2', 'P3') as fc.Arbitrary<Exclude<EmailClass, 'P0_AUTH'>>,
+        fc.boolean(),
+        fc.integer({ min: 0, max: 50 }),
+        (s, cls, restrictedSender, userSentToday) => {
+          const opts = { restrictedSender, userSentToday };
+          const a = allowanceFor(cls, s, DEFAULT_BUDGET, opts);
+          expect(a.left).toBeGreaterThanOrEqual(0);
+          expect(a.left > 0).toBe(decide(cls, s, DEFAULT_BUDGET, opts).action === 'send');
+        },
+      ),
+      { numRuns: 500 },
+    );
   });
 
   it('a provider 429 snaps the day shut', () => {

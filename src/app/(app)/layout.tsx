@@ -15,9 +15,24 @@ export const instant = false;
 async function AccountMenu() {
   const user = await requireUser('/app');
   // Only decides whether to show the link; the page and its actions check again in the database.
-  const { data: controls } = await (await createSupabaseServerClient()).from('account_controls').select('is_platform_admin').eq('user_id', user.id).maybeSingle();
+  const supabase = await createSupabaseServerClient();
+  const [{ data: controls }, unread] = await Promise.all([
+    supabase.from('account_controls').select('is_platform_admin').eq('user_id', user.id).maybeSingle(),
+    // row-level security limits this to the person's own notices
+    supabase.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
+  ]);
+  const unreadCount = unread.count ?? 0;
   return (
     <div className="flex items-center gap-3">
+      <Link href="/app/notifications" className="text-sm font-medium text-ink">
+        Notifications
+        {unreadCount > 0 ? (
+          <span className="ml-1.5 inline-flex min-w-6 items-center justify-center rounded-pill bg-ink px-1.5 py-0.5 text-xs font-medium text-on-ink">
+            {unreadCount > 99 ? '99+' : unreadCount}
+            <span className="sr-only"> unread</span>
+          </span>
+        ) : null}
+      </Link>
       {controls?.is_platform_admin ? (
         <Link href="/app/admin" className="text-sm font-medium text-ink">
           Accounts

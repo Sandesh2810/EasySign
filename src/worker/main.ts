@@ -29,8 +29,12 @@ async function runDue(): Promise<boolean> {
   const { data, error } = await supabaseAdmin().rpc('process_due', {});
   if (error) throw new Error(`process_due: ${error.message}`);
   const row = (Array.isArray(data) ? data[0] : data) as { expired_count: number; reminder_count: number } | null;
-  if (row && (row.expired_count > 0 || row.reminder_count > 0)) {
-    log(`due: ${row.expired_count} document(s) expired, ${row.reminder_count} reminder(s) queued`);
+  // daily summaries for the people who asked for one (at most one each per 24 hours)
+  const digests = await supabaseAdmin().rpc('queue_digests', {});
+  if (digests.error) throw new Error(`queue_digests: ${digests.error.message}`);
+  const digestCount = typeof digests.data === 'number' ? digests.data : 0;
+  if ((row && (row.expired_count > 0 || row.reminder_count > 0)) || digestCount > 0) {
+    log(`due: ${row?.expired_count ?? 0} document(s) expired, ${row?.reminder_count ?? 0} reminder(s) queued, ${digestCount} daily summar${digestCount === 1 ? 'y' : 'ies'} queued`);
     return true;
   }
   return false;
