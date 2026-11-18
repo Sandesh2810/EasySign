@@ -194,6 +194,71 @@ begin
     res := res || E'FAIL T36 service role called a private helper directly\n';
   exception when insufficient_privilege then res := res || E'PASS T36 private helpers are not callable, even by the service role\n'; end;
 
+  -- ---------- draft functions (migration 6), still as the service role ----------
+  declare
+    e2 uuid; e3 uuid; d2 uuid; r2 uuid; h1 text; h2 text; cnt int; fld jsonb; pth text;
+  begin
+    select e.id into e2 from public.create_envelope(a, org_a, 'Draft function test', null) e;
+    pth := org_a || '/' || e2 || '/d1';
+
+    begin perform public.add_envelope_document(b, e2, 'x.pdf', 'supabase', pth, repeat('ab', 32), 2, 1000, '[]', 'pdf');
+      res := res || E'FAIL T41 a non-member attached a document\n';
+    exception when insufficient_privilege then res := res || E'PASS T41 a non-member cannot attach a document (and learns nothing about whether the envelope exists)\n'; end;
+
+    begin perform public.add_envelope_document(a, e2, 'x.pdf', 'supabase', org_b || '/' || e2 || '/d1', repeat('ab', 32), 2, 1000, '[]', 'pdf');
+      res := res || E'FAIL T42 document attached with a storage path from another workspace\n';
+    exception when insufficient_privilege then res := res || E'PASS T42 a storage path outside the envelope''s own folder is refused\n'; end;
+
+    select d.id into d2 from public.add_envelope_document(a, e2, 'x.pdf', 'supabase', pth, repeat('ab', 32), 2, 1000, '[]', 'pdf') d;
+    begin perform public.add_envelope_document(a, e2, 'y.pdf', 'supabase', org_a || '/' || e2 || '/d2', repeat('cd', 32), 1, 500, '[]', 'pdf');
+      res := res || E'FAIL T43 second document attached\n';
+    exception when unique_violation then
+      if exists (select 1 from public.audit_events x where x.chain_key = 'env:' || e2 and x.event_type = 'document_uploaded')
+      then res := res || E'PASS T43 one document per envelope; the upload is in the audit chain\n';
+      else res := res || E'FAIL T43 document_uploaded event missing\n'; end if;
+    end;
+
+    update public.account_controls set storage_quota_bytes = 1500 where user_id = a;
+    select e.id into e3 from public.create_envelope(a, org_a, 'Quota test', null) e;
+    begin perform public.add_envelope_document(a, e3, 'big.pdf', 'supabase', org_a || '/' || e3 || '/d1', repeat('ef', 32), 1, 1000, '[]', 'pdf');
+      res := res || E'FAIL T44 upload accepted over the storage allowance\n';
+    exception when disk_full then res := res || E'PASS T44 an upload over the user''s storage allowance is refused\n'; end;
+
+    select x.id into r2 from public.save_recipients(a, e2, '[{"name":" Sam Signer ","email":"SAM@Example.test","role":"signer","routing_order":1}]') x limit 1;
+    if exists (select 1 from public.recipients x where x.id = r2 and x.email = 'sam@example.test' and x.name = 'Sam Signer')
+       and (select count(*) from public.recipients x where x.envelope_id = e2) = 1
+    then res := res || E'PASS T45 recipients are saved, trimmed and lower-cased\n'; else res := res || E'FAIL T45 save_recipients\n'; end if;
+
+    fld := jsonb_build_array(jsonb_build_object('document_id', d2, 'recipient_id', r2, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.1, 'w', 0.3, 'h', 0.05));
+    h1 := public.save_fields(a, e2, fld);
+    h2 := public.save_fields(a, e2, fld);
+    select count(*) into cnt from public.audit_events x where x.chain_key = 'env:' || e2 and x.event_type = 'fields_changed';
+    if h1 = h2 and h1 ~ '^[0-9a-f]{64}$' and cnt = 1 and (select e.field_layout_sha256 from public.envelopes e where e.id = e2) = h1
+    then res := res || E'PASS T46 fields save; saving the same layout twice writes one audit event, not two\n';
+    else res := res || 'FAIL T46 save_fields :: events=' || cnt || E'\n'; end if;
+
+    begin perform public.save_fields(a, e2, jsonb_build_array(jsonb_build_object('document_id', d2, 'recipient_id', r2, 'type', 'text', 'page', 3, 'x', 0.1, 'y', 0.1, 'w', 0.3, 'h', 0.05)));
+      res := res || E'FAIL T47 field accepted on a page that does not exist\n';
+    exception when invalid_parameter_value then res := res || E'PASS T47 a field on a non-existent page is refused\n'; end;
+
+    begin perform public.save_fields(b, e2, fld);
+      res := res || E'FAIL T48 a non-member saved fields\n';
+    exception when insufficient_privilege then res := res || E'PASS T48 a non-member cannot save fields\n'; end;
+
+    select count(*) into cnt from public.delete_draft_envelope(a, e2) x where x.storage_path = pth;
+    if cnt = 1 and not exists (select 1 from public.envelopes e where e.id = e2) and not exists (select 1 from public.fields f where f.envelope_id = e2)
+    then res := res || E'PASS T49 deleting a draft removes it and reports the stored file to clean up\n'; else res := res || E'FAIL T49 delete_draft_envelope\n'; end if;
+  end;
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', a, 'role', 'authenticated')::text, true);
+  n := 0;
+  begin perform public.save_fields(a, env_a, '[]'); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.save_recipients(a, env_a, '[]'); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.delete_draft_envelope(a, env_a); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.update_envelope_draft(a, env_a, 'x', '', null); n := n + 1; exception when insufficient_privilege then null; end;
+  if n = 0 then res := res || E'PASS T50 signed-in users cannot call the draft functions directly\n'; else res := res || 'FAIL T50 :: ' || n || E' callable\n'; end if;
+
   -- ---------- storage immutability and freezing (migration role) ----------
   execute 'reset role';
   begin update storage.objects set metadata = '{"size":2}', version = 'v2' where bucket_id = 'originals' and name = obj_path;
@@ -220,6 +285,13 @@ begin
     res := res || E'FAIL T29 envelope completed without a sealed file\n';
   exception when check_violation then res := res || E'PASS T29 an envelope cannot be marked completed without a sealed file and hashes\n'; end;
   perform set_config('easysign.sanctioned', '', true);
+
+  n := 0;
+  begin perform public.save_fields(a, env_a, '[]'); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.save_recipients(a, env_a, '[]'); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.update_envelope_draft(a, env_a, 'new title', '', null); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.delete_draft_envelope(a, env_a); n := n + 1; exception when insufficient_privilege then null; end;
+  if n = 0 then res := res || E'PASS T51 once sent, the owner cannot edit fields, recipients or details, or delete the envelope\n'; else res := res || 'FAIL T51 :: ' || n || E' edit(s) got through after send\n'; end if;
 
   -- ---------- audit chain ----------
   perform app_private.audit_append('env:' || env_a, org_a, env_a, rcp_a, 'signer', null, 'link_opened', '{"n":1}', '203.0.113.7', 'test-agent');
