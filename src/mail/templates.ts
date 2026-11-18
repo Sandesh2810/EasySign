@@ -6,6 +6,9 @@ import { PRODUCT_NAME } from '@/config/brand';
 export const esc = (s: string) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
+/** A subject is one line: control characters (including line breaks) from a title or a name are removed. */
+export const oneLine = (s: string) => String(s ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200);
+
 export interface RenderedEmail {
   subject: string;
   html: string;
@@ -55,7 +58,7 @@ export function verifyEmailTemplate(v: { name: string; confirmUrl: string }): Re
 }
 
 export function signatureRequestTemplate(v: { signerName: string; senderName: string; title: string; signUrl: string; expiresOn: string }): RenderedEmail {
-  const subject = `${v.senderName} sent you "${v.title}" to sign`;
+  const subject = oneLine(`${v.senderName} sent you "${v.title}" to sign`);
   return {
     subject,
     html: layout({
@@ -81,7 +84,7 @@ export function signatureRequestTemplate(v: { signerName: string; senderName: st
 }
 
 export function completionTemplate(v: { name: string; title: string; code: string; finalSha256: string; openUrl?: string }): RenderedEmail {
-  const subject = `Completed: "${v.title}"`;
+  const subject = oneLine(`Completed: "${v.title}"`);
   return {
     subject,
     html: layout({

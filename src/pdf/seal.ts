@@ -200,9 +200,16 @@ function drawSignature(page: PDFPage, box: PageBox, f: Extract<SealField, { kind
 
 function drawTextField(page: PDFPage, box: PageBox, f: Extract<SealField, { kind: 'text' }>, fonts: Fonts) {
   const fr = frame(page, rectToPdf(box, f.rect));
-  const str = fonts.safe(f.text);
-  if (!str.trim()) return;
-  const size = fitSize(fonts.regular, [str], fr.w - 2, Math.min(11, fr.h * 0.7), 4) ?? 4;
+  let str = fonts.safe(f.text).trim();
+  if (!str) return;
+  let size = fitSize(fonts.regular, [str], fr.w - 2, Math.min(11, fr.h * 0.7), 4);
+  if (size === null) {
+    // Too long for the field even at the smallest size: cut it so it can never run over the
+    // document's own text. The full value stays in the database and its hash in the audit trail.
+    size = 4;
+    while (str.length > 1 && fonts.regular.widthOfTextAtSize(`${str}…`, size) > fr.w - 2) str = str.slice(0, -1);
+    str = `${str}…`;
+  }
   fr.text(str, 1, Math.max(0, (fr.h - size) / 2) + size * 0.2, size, fonts.regular, INK);
 }
 

@@ -3,6 +3,7 @@
 // GET /api/sign/document?part=signature|initials -> the signer's own adopted signature image
 // Authorised by the signer session cookie, re-checked against the live link on every request.
 import type { NextRequest } from 'next/server';
+import { allow, TOO_MANY } from '@/lib/rate-limit';
 import { json } from '@/lib/request-guard';
 import { loadSignerContext } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
@@ -27,6 +28,8 @@ function send(bytes: Uint8Array, type: string, disposition: string) {
 export async function GET(request: NextRequest) {
   const ctx = await loadSignerContext();
   if (!ctx) return json(401, { error: 'Open your signing link again.' });
+  // a page view needs two or three files; this stops one link being used to pull the file in a loop
+  if (!(await allow({ bucket: 'sign_file', limit: 240, windowSeconds: 3600 }, ctx.tokenId))) return json(429, { error: TOO_MANY });
   const part = request.nextUrl.searchParams.get('part') ?? 'original';
   const env = ctx.envelope;
   const admin = supabaseAdmin();

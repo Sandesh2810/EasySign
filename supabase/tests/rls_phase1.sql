@@ -12,6 +12,7 @@ declare
   n int; t text; v record;
   procedure_dummy int;
   e4 uuid;
+  d_today text := to_char((now() at time zone 'UTC')::date, 'YYYY-MM-DD');
 begin
   -- ---------- setup as the migration role ----------
   insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -338,20 +339,45 @@ begin
     if n = 0 then res := res || E'PASS T61 a signer cannot type into a signature field, another envelope''s field, or act with a made-up link id\n';
     else res := res || 'FAIL T61 :: ' || n || E'\n'; end if;
 
-    begin perform public.signer_complete(tok, repeat('d1', 32), '2026-11-17', '203.0.113.9', 'ua');
+    n := 0;
+    begin perform public.signer_fill_field(tok, f_date, '2019-01-01', null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    if n = 0 then res := res || E'PASS T75 the signer cannot type into the date field (the system fills it in)\n';
+    else res := res || E'FAIL T75 the signer set the date field\n'; end if;
+
+    n := 0;
+    begin perform public.reveal_signing_links(b, e4); n := n + 1; exception when insufficient_privilege then null; end;
+    select count(*) into cnt from public.reveal_signing_links(a, e4);
+    if n = 0 and cnt = 1 and exists (select 1 from public.audit_events x where x.envelope_id = e4 and x.event_type = 'link_revealed' and x.actor_id = a)
+    then res := res || E'PASS T78 only a member of the workspace can fetch a signing link, and doing so is written to the audit trail\n';
+    else res := res || 'FAIL T78 reveal :: n=' || n || ' rows=' || cnt || E'\n'; end if;
+
+    begin perform public.signer_complete(tok, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
       res := res || E'FAIL T62 completed without a signature\n';
     exception when invalid_parameter_value then res := res || E'PASS T62 the signer cannot finish without creating a signature\n'; end;
 
     perform public.signer_adopt_signature(tok, 'signature', 'drawn', 'supabase', org_a || '/' || e4 || '/sig1.png', repeat('5a', 32), null, null, '203.0.113.9', 'ua');
-    begin perform public.signer_complete(tok, repeat('d1', 32), '2026-11-17', '203.0.113.9', 'ua');
+    n := 0;
+    begin perform public.signer_complete(tok, repeat('d1', 32), '2019-01-01', '203.0.113.9', 'ua'); n := n + 1;
+    exception when others then if sqlerrm not like 'ES_DATE%' then n := n + 10; end if; end;
+    begin perform public.signer_complete(tok, repeat('d1', 32), '9999-99-99', '203.0.113.9', 'ua'); n := n + 1;
+    exception when others then if sqlerrm not like 'invalid completion data%' then n := n + 10; end if; end;
+    if n = 0 then res := res || E'PASS T76 a signing date that is not today, or is not a real date, is refused\n';
+    else res := res || 'FAIL T76 backdating :: ' || n || E'\n'; end if;
+
+    begin perform public.signer_complete(tok, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
       res := res || E'FAIL T63 completed with a required field empty\n';
     exception when invalid_parameter_value then res := res || E'PASS T63 the signer cannot finish while a required field is empty\n'; end;
 
     perform public.signer_fill_field(tok, f_txt, '  Acme Ltd  ', '203.0.113.9', 'ua');
-    st := public.signer_complete(tok, repeat('d1', 32), '2026-11-17', '203.0.113.9', 'ua');
+    select count(*) into cnt from public.audit_events x where x.envelope_id = e4;
+    perform public.signer_fill_field(tok, f_txt, 'Acme Ltd', '203.0.113.9', 'ua');
+    if cnt = (select count(*) from public.audit_events x where x.envelope_id = e4)
+    then res := res || E'PASS T77 saving an unchanged value writes nothing to the audit trail\n';
+    else res := res || E'FAIL T77 unchanged value logged again\n'; end if;
+    st := public.signer_complete(tok, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
     if st = 'sealing'
        and (select v2.signature_id from public.field_values v2 where v2.field_id = f_sig) = code4 || '-S1'
-       and (select v2.value_text from public.field_values v2 where v2.field_id = f_date) = '2026-11-17'
+       and (select v2.value_text from public.field_values v2 where v2.field_id = f_date) = d_today
        and (select v2.value_text from public.field_values v2 where v2.field_id = f_txt) = 'Acme Ltd'
        and (select x.status from public.recipients x where x.id = r4) = 'signed'
        and exists (select 1 from public.seal_jobs j where j.envelope_id = e4 and j.status = 'queued')
@@ -359,7 +385,7 @@ begin
     then res := res || E'PASS T64 finishing applies the signature with id <code>-S1, fills the date, marks the signer signed and queues sealing\n';
     else res := res || 'FAIL T64 signer_complete :: ' || coalesce(st, 'null') || E'\n'; end if;
 
-    begin perform public.signer_complete(tok, repeat('d1', 32), '2026-11-17', null, null);
+    begin perform public.signer_complete(tok, repeat('d1', 32), d_today, null, null);
       res := res || E'FAIL T65 signed twice\n';
     exception when insufficient_privilege then res := res || E'PASS T65 a signer cannot sign twice\n'; end;
 

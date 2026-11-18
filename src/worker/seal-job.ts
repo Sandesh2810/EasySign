@@ -69,7 +69,9 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
 
   const sealRecipients: SealRecipient[] = recipients.map((r) => {
     const consent = consents.filter((c) => c.recipient_id === r.id).at(-1);
-    const signature = assets.filter((a) => a.recipient_id === r.id && a.kind === 'signature').at(-1);
+    // the signature actually applied to this signer's fields, not merely the last one they tried
+    const applied = fields.find((f) => f.recipient_id === r.id && f.type === 'signature');
+    const signature = applied ? assetOf.get(valueOf.get(applied.id as string)?.signature_asset_id as string) : undefined;
     return {
       id: r.id as string,
       name: r.name as string,
@@ -115,12 +117,14 @@ export async function runOneSealJob(log: (msg: string) => void): Promise<'none' 
   const job = (Array.isArray(claim.data) ? claim.data[0] : null) as ClaimedJob | null;
   if (!job) return 'none';
 
+  const storage = getStorage();
+  let written: string[] = [];
   try {
     const { input, orgId } = await buildInput(job);
     const out = await buildSealedPdf(input);
-    const storage = getStorage();
     const sealedPath = `${orgId}/${job.envelope_id}/sealed-${job.attempt_id}.pdf`;
     const certificatePath = `${orgId}/${job.envelope_id}/certificate-${job.attempt_id}.pdf`;
+    written = [sealedPath, certificatePath];
     await storage.put('sealed', sealedPath, out.sealed, { contentType: 'application/pdf' });
     await storage.put('sealed', certificatePath, out.certificate, { contentType: 'application/pdf' });
     const done = await db.rpc('complete_seal_job', {
@@ -147,6 +151,9 @@ export async function runOneSealJob(log: (msg: string) => void): Promise<'none' 
   } catch (e) {
     const message = e instanceof Error ? e.message : 'unknown error';
     const failed = await db.rpc('fail_seal_job', { p_envelope_id: job.envelope_id, p_attempt_id: job.attempt_id, p_error: message });
+    // The database confirmed this attempt is over (retry or failed), so its files are referenced by
+    // nothing: remove them. If the answer is unclear ("ignored" or no answer) they are left alone.
+    if (failed.data === 'retry' || failed.data === 'failed') for (const p of written) await storage.remove('sealed', p).catch(() => {});
     log(`seal ${job.envelope_id}: attempt ${job.attempts} failed (${message}) -> ${failed.data ?? failed.error?.message}`);
     return failed.data === 'failed' ? 'failed' : 'retry';
   }

@@ -38,6 +38,8 @@ export async function consentAction(_prev: SignResult | null, formData: FormData
 export async function fillFieldAction(fieldId: string, value: string): Promise<SignResult> {
   const ctx = await loadSignerContext();
   if (!ctx) return { ok: false, message: EXPIRED };
+  // every change is written to the audit trail, so the number of changes per link is bounded
+  if (!(await allow({ bucket: 'sign_fill', limit: 300, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
   const id = z.uuid().safeParse(fieldId);
   const text = z.string().max(500).safeParse(value);
   if (!id.success || !text.success) return { ok: false, message: 'That value could not be saved. Keep it under 500 characters.' };
@@ -103,7 +105,9 @@ export async function adoptSignatureAction(formData: FormData): Promise<SignResu
     p_user_agent: ua,
   });
   if (error) {
-    await storage.remove('signatures', path).catch(() => {});
+    // Remove the image only when the database definitely refused it (a Postgres error code). After a
+    // timeout or dropped connection the row may exist, and a row pointing at a missing file would block sealing.
+    if (/^[0-9A-Z]{5}$/.test(error.code ?? '')) await storage.remove('signatures', path).catch(() => {});
     return { ok: false, message: friendlyDbError(error.message).message };
   }
   return { ok: true };

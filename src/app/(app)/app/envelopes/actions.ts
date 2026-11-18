@@ -6,8 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { fieldsSchema } from '@/lib/fields';
 import { friendlyDbError } from '@/lib/request-guard';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { byteaToBuffer, mintTokenRecord, signingLink } from '@/lib/signing/links';
+import { mintTokenRecord, signingLink } from '@/lib/signing/links';
 import { requireUser } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getStorageFor } from '@/storage';
@@ -88,21 +87,14 @@ export async function getSigningLinkAction(envelopeId: string): Promise<{ ok: tr
   const user = await requireUser();
   const id = z.uuid().safeParse(envelopeId);
   if (!id.success) return { ok: false, message: 'Document not found.' };
-  // Authorisation: read through the user's own session, so row-level security decides.
-  const mine = await (await createSupabaseServerClient()).from('envelopes').select('id, status, org_id').eq('id', id.data).maybeSingle();
-  if (!mine.data) return { ok: false, message: 'Document not found.' };
-  const admin = supabaseAdmin();
-  const member = await admin.from('memberships').select('role').eq('org_id', mine.data.org_id).eq('user_id', user.id).maybeSingle();
-  if (!member.data || member.data.role === 'viewer') return { ok: false, message: 'You do not have permission to share this document.' };
-  if (!['sent', 'in_progress'].includes(mine.data.status as string)) return { ok: false, message: 'This document is not open for signing.' };
-
-  const rows = await admin.from('recipient_tokens').select('id, nonce, recipients(name)').eq('envelope_id', id.data).is('revoked_at', null);
-  if (rows.error) return { ok: false, message: 'The link could not be prepared. Try again.' };
-  const links = (rows.data ?? []).map((t) => {
-    const rel = t.recipients as unknown as { name: string } | { name: string }[] | null;
-    const name = (Array.isArray(rel) ? rel[0]?.name : rel?.name) ?? 'Signer';
-    return { name, link: signingLink(t.id as string, byteaToBuffer(t.nonce as string)) };
-  });
+  // The database function checks that this user is a member (not a viewer, not suspended) of the
+  // document's workspace and that the document is open, and writes "link_revealed" to the audit trail.
+  const rows = await supabaseAdmin().rpc('reveal_signing_links', { p_actor: user.id, p_envelope_id: id.data });
+  if (rows.error) return { ok: false, message: friendlyDbError(rows.error.message).message };
+  const links = ((rows.data ?? []) as { token_id: string; nonce_hex: string; recipient_name: string }[]).map((t) => ({
+    name: t.recipient_name,
+    link: signingLink(t.token_id, Buffer.from(t.nonce_hex, 'hex')),
+  }));
   return { ok: true, links };
 }
 
