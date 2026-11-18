@@ -13,7 +13,7 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     // generated copies of third-party files
-    "public/pdfjs/**",
+    "public/pdfjs/**", "dist/**",
   ]),
 ]);
 

@@ -53,3 +53,55 @@ export function verifyEmailTemplate(v: { name: string; confirmUrl: string }): Re
     ].join('\n'),
   };
 }
+
+export function signatureRequestTemplate(v: { signerName: string; senderName: string; title: string; signUrl: string; expiresOn: string }): RenderedEmail {
+  const subject = `${v.senderName} sent you "${v.title}" to sign`;
+  return {
+    subject,
+    html: layout({
+      preheader: `Review and sign "${v.title}".`,
+      heading: 'A document is waiting for your signature',
+      paragraphs: [
+        `Hello ${esc(v.signerName)},`,
+        `${esc(v.senderName)} has sent you <strong>${esc(v.title)}</strong> to review and sign. It takes a few minutes and you do not need an account.`,
+      ],
+      button: { label: 'Review and sign', url: v.signUrl },
+      footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can sign as you. If you were not expecting this document, ignore this email.`,
+    }),
+    text: [
+      `Hello ${v.signerName},`,
+      '',
+      `${v.senderName} has sent you "${v.title}" to review and sign. You do not need an account. Open this link:`,
+      v.signUrl,
+      '',
+      `The link is personal to you and works until ${v.expiresOn}. Do not forward this email: anyone who has the link can sign as you.`,
+      'If you were not expecting this document, ignore this email.',
+    ].join('\n'),
+  };
+}
+
+export function completionTemplate(v: { name: string; title: string; code: string; finalSha256: string; openUrl?: string }): RenderedEmail {
+  const subject = `Completed: "${v.title}"`;
+  return {
+    subject,
+    html: layout({
+      preheader: 'Everyone has signed. Your copy is attached.',
+      heading: 'Everyone has signed',
+      paragraphs: [
+        `Hello ${esc(v.name)},`,
+        `<strong>${esc(v.title)}</strong> is complete. The signed PDF and its certificate of completion are attached to this email. Keep them somewhere safe.`,
+        `Verification code: <span style="font-family:Consolas,Menlo,monospace;">${esc(v.code)}</span>`,
+      ],
+      button: v.openUrl ? { label: 'Open in ' + PRODUCT_NAME, url: v.openUrl } : undefined,
+      footnote: `SHA-256 of the signed PDF: <span style="word-break:break-all;font-family:Consolas,Menlo,monospace;">${esc(v.finalSha256)}</span>`,
+    }),
+    text: [
+      `Hello ${v.name},`,
+      '',
+      `"${v.title}" is complete. The signed PDF and its certificate of completion are attached. Keep them somewhere safe.`,
+      `Verification code: ${v.code}`,
+      `SHA-256 of the signed PDF: ${v.finalSha256}`,
+      ...(v.openUrl ? ['', v.openUrl] : []),
+    ].join('\n'),
+  };
+}

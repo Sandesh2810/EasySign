@@ -1,0 +1,110 @@
+'use client';
+// Step 3 on the document page: send the document, then (while it is open) fetch the signing link on request.
+import { useActionState, useState, useTransition } from 'react';
+import { Button, Notice } from '@/components/ui';
+import { getSigningLinkAction, sendEnvelopeAction, type ActionResult } from '../actions';
+
+export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: string; selfSign: boolean; hasSigner: boolean }) {
+  const [state, action, pending] = useActionState<ActionResult | null, FormData>(sendEnvelopeAction, null);
+  return (
+    <form action={action} className="flex flex-col gap-3">
+      <input type="hidden" name="envelope_id" value={envelopeId} />
+      <p className="text-sm text-ink-body">
+        {selfSign
+          ? 'You are the signer. Nothing is emailed: you sign straight away in this browser.'
+          : 'Once sent, the document, the signer and the fields are locked and cannot be edited.'}
+      </p>
+      {state && !state.ok ? <Notice tone="danger">{state.message}</Notice> : null}
+      <div className="flex flex-wrap gap-2">
+        {selfSign ? (
+          <Button type="submit" name="delivery" value="link" disabled={pending || !hasSigner}>
+            {pending ? 'Preparing…' : 'Lock and start signing'}
+          </Button>
+        ) : (
+          <>
+            <Button type="submit" name="delivery" value="email" disabled={pending || !hasSigner}>
+              {pending ? 'Sending…' : 'Send by email'}
+            </Button>
+            <Button type="submit" name="delivery" value="link" variant="outline" disabled={pending || !hasSigner}>
+              Get a link to share instead
+            </Button>
+          </>
+        )}
+      </div>
+      {!hasSigner ? <p className="text-sm text-ink-muted">Save the signer first (step 1).</p> : null}
+    </form>
+  );
+}
+
+export function SigningLinkPanel({ envelopeId, selfSign }: { envelopeId: string; selfSign: boolean }) {
+  const [links, setLinks] = useState<{ name: string; link: string }[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+
+  const load = () =>
+    start(async () => {
+      setError(null);
+      const res = await getSigningLinkAction(envelopeId);
+      if (res.ok) setLinks(res.links);
+      else setError(res.message);
+    });
+
+  const copy = async (link: string) => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(link);
+    } catch {
+      setError('Copying was blocked by the browser. Select the link and copy it by hand.');
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-ink-body">
+        {selfSign
+          ? 'Open your signing page to finish this document.'
+          : 'Anyone who has this link can sign as this person. Share it only with the signer.'}
+      </p>
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+      {links === null ? (
+        <div>
+          <Button type="button" variant={selfSign ? 'primary' : 'outline'} onClick={load} disabled={pending}>
+            {pending ? 'Preparing…' : selfSign ? 'Show my signing link' : 'Show signing link'}
+          </Button>
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-3">
+          {links.map((l) => (
+            <li key={l.link} className="flex flex-col gap-2">
+              <label htmlFor={`link-${l.name}`} className="text-sm font-medium text-ink">
+                Link for {l.name}
+              </label>
+              <input
+                id={`link-${l.name}`}
+                readOnly
+                value={l.link}
+                onFocus={(e) => e.currentTarget.select()}
+                className="min-h-11 rounded-sm border border-control-border bg-surface px-3 font-mono text-xs text-ink"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                {selfSign ? (
+                  <a
+                    href={l.link}
+                    className="inline-flex min-h-11 items-center justify-center rounded-pill bg-ink px-6 text-base font-medium text-on-ink no-underline hover:opacity-90"
+                  >
+                    Sign now
+                  </a>
+                ) : null}
+                <Button type="button" variant="outline" onClick={() => copy(l.link)}>
+                  {copied === l.link ? 'Copied' : 'Copy link'}
+                </Button>
+              </div>
+            </li>
+          ))}
+          {links.length === 0 ? <li className="text-sm text-ink-muted">There is no open signing link for this document.</li> : null}
+        </ul>
+      )}
+    </div>
+  );
+}

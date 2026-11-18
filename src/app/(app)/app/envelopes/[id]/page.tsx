@@ -11,6 +11,7 @@ import type { FieldType } from '@/lib/fields';
 import { deleteDraftAction } from '../actions';
 import { FieldEditor, type EditorField } from './field-editor';
 import { RecipientForm } from './recipient-form';
+import { SendPanel, SigningLinkPanel } from './send-panel';
 
 export const metadata: Metadata = { title: 'Document' };
 
@@ -30,15 +31,17 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
 
   const supabase = await createSupabaseServerClient();
   const [{ data: env }, { data: docs }, { data: recipients }, { data: fields }] = await Promise.all([
-    supabase.from('envelopes').select('id, title, status, public_code, created_at').eq('id', id.data).maybeSingle(),
+    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at').eq('id', id.data).maybeSingle(),
     supabase.from('envelope_documents').select('id, filename, page_count, size_bytes, sha256').eq('envelope_id', id.data).order('position'),
-    supabase.from('recipients').select('id, name, email, role, status').eq('envelope_id', id.data).order('routing_order'),
+    supabase.from('recipients').select('id, name, email, role, status, is_sender').eq('envelope_id', id.data).order('routing_order'),
     supabase.from('fields').select('id, type, page, x, y, w, h, required').eq('envelope_id', id.data),
   ]);
   if (!env) notFound(); // row-level security: someone else's document does not exist for this user
   const doc = docs?.[0];
   const recipient = recipients?.[0] ?? null;
   const isDraft = env.status === 'draft';
+  const isOpen = env.status === 'sent' || env.status === 'in_progress';
+  const selfSign = isDraft ? Boolean(recipient?.is_sender) : Boolean(env.self_sign);
   const initialFields: EditorField[] = (fields ?? []).map((f) => ({
     key: f.id as string,
     type: f.type as FieldType,
@@ -113,6 +116,29 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
             initialFields={initialFields}
             readOnly={!isDraft}
           />
+        </section>
+      ) : null}
+
+      {doc && (isDraft || isOpen) ? (
+        <section className="rounded-lg bg-surface p-6 shadow-soft">
+          <h2 className="mb-3 text-base font-medium text-ink">{isDraft ? '3. Send' : 'Signing link'}</h2>
+          {isDraft ? (
+            <SendPanel envelopeId={env.id} selfSign={selfSign} hasSigner={Boolean(recipient)} />
+          ) : (
+            <SigningLinkPanel envelopeId={env.id} selfSign={selfSign} />
+          )}
+        </section>
+      ) : null}
+
+      {env.status === 'completed' ? (
+        <section className="rounded-lg bg-surface p-6 shadow-soft">
+          <h2 className="mb-3 text-base font-medium text-ink">Completed</h2>
+          <p className="text-sm text-ink-body">Everyone has signed. The sealed file and its certificate are ready.</p>
+          <p className="mt-2 break-all font-mono text-xs text-ink-muted">SHA-256 of the sealed file: {env.final_sha256}</p>
+          <p className="mt-4 flex flex-wrap gap-4 text-sm">
+            <a href={`/api/envelopes/${env.id}/sealed`}>Download the signed PDF</a>
+            <a href={`/api/envelopes/${env.id}/sealed?part=certificate`}>Download the certificate</a>
+          </p>
         </section>
       ) : null}
 

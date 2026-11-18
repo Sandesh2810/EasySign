@@ -54,3 +54,6 @@ next-env.d.ts
 
 # generated pdf.js assets
 /public/pdfjs/
+
+# worker bundle
+/dist/

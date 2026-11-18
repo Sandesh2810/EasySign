@@ -13,7 +13,9 @@
     "tokens": "node scripts/build-tokens.mjs",
     "check:contrast": "node design/contrast-check.mjs",
     "setup:env": "node scripts/setup-env.mjs",
-    "secret-scan": "node scripts/secret-scan.mjs --all"
+    "secret-scan": "node scripts/secret-scan.mjs --all",
+    "worker": "node scripts/build-worker.mjs && node --env-file=.env.local dist/worker.mjs",
+    "worker:once": "node scripts/build-worker.mjs && node --env-file=.env.local dist/worker.mjs --once"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "1.1.1",
@@ -39,6 +41,7 @@
     "eslint": "9.39.5",
     "eslint-config-next": "16.4.6",
     "fast-check": "4.10.2",
+    "rolldown": "1.2.19",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vitest": "5.1.0"
