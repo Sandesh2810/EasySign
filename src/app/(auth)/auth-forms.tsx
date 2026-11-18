@@ -80,8 +80,18 @@ export function SignupForm() {
   if (state?.ok) {
     return (
       <>
-        <h1 className="mb-4 text-2xl font-medium text-ink">Check your email</h1>
+        <h1 className="mb-4 text-2xl font-medium text-ink">{state.devConfirmUrl ? 'One more step' : 'Check your email'}</h1>
         <Notice tone="success">{state.message}</Notice>
+        {state.devConfirmUrl ? (
+          <p className="mt-6">
+            <a
+              href={state.devConfirmUrl}
+              className="inline-flex min-h-11 items-center justify-center rounded-pill bg-ink px-6 text-base font-medium text-on-ink no-underline hover:opacity-90"
+            >
+              Confirm my email now
+            </a>
+          </p>
+        ) : null}
         <p className="mt-6 text-sm text-ink-body">
           Already confirmed? <Link href="/login">Sign in</Link>
         </p>
@@ -126,6 +136,11 @@ export function ConfirmEmailForm() {
           {pending ? 'Confirming…' : 'Confirm email'}
         </Button>
       </form>
+      {state && !state.ok ? (
+        <p className="mt-6 text-sm text-ink-body">
+          If you confirmed earlier, just <Link href="/login">sign in</Link>. Otherwise <Link href="/signup">sign up again</Link> to get a fresh link.
+        </p>
+      ) : null}
       {!tokenHash ? (
         <div className="mt-4">
           <Notice tone="danger">This link is incomplete. Open the link from your email again.</Notice>

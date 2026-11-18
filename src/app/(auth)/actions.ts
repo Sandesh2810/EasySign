@@ -14,7 +14,14 @@ import { getMailProvider } from '@/mail';
 import { verifyEmailTemplate } from '@/mail/templates';
 import { NOTIFY_MODE } from '@/config/brand';
 
-export type FormState = { ok: boolean; message: string } | null;
+export type FormState = { ok: boolean; message: string; devConfirmUrl?: string } | null;
+
+/**
+ * True only when the app runs on this computer with emails written to a folder instead of being sent.
+ * In that one situation the confirmation link is offered on screen after sign-up, because there is no
+ * mailbox to receive it. Both conditions are required, so a deployed site can never show the link.
+ */
+const isLocalDevelopment = () => NOTIFY_MODE === 'log' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(env.appUrl());
 
 const email = z.string().trim().toLowerCase().max(254).pipe(z.email());
 const signUpSchema = z.object({
@@ -27,6 +34,7 @@ const signInSchema = z.object({ email, password: z.string().min(1).max(200) });
 const SIGNUP_DONE =
   'If this address can be registered, a confirmation link is on its way. Open it to finish creating your account.' +
   (NOTIFY_MODE === 'log' ? ' (Development mode: the email was written to the app\\.dev-outbox folder instead of being sent.)' : '');
+const SIGNUP_DONE_LOCAL = 'Your account is created. Nothing was emailed, because this copy of EasySign runs only on this computer. Press the button below to confirm your email address and finish.';
 
 export async function signUpAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = signUpSchema.safeParse({ name: formData.get('name'), email: formData.get('email'), password: formData.get('password') });
@@ -42,13 +50,21 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
     password,
     options: { data: { full_name: name } },
   });
-  // Same answer whether the address is new, already registered, or not allowed: no account enumeration.
-  if (error || !data?.properties?.hashed_token) return { ok: true, message: SIGNUP_DONE };
+  if (error || !data?.properties?.hashed_token) {
+    // On this computer there is nobody to hide the reason from, and a silent "check your email" would be a dead end.
+    if (isLocalDevelopment()) {
+      return /already|registered|exists/i.test(error?.message ?? '')
+        ? { ok: false, message: 'An account with this email address already exists here. Sign in instead, or use a different email address.' }
+        : { ok: false, message: 'The account could not be created. Check the email address and try again.' };
+    }
+    // Same answer whether the address is new, already registered, or not allowed: no account enumeration.
+    return { ok: true, message: SIGNUP_DONE };
+  }
 
   const confirmUrl = `${env.appUrl()}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=signup`;
   const mail = verifyEmailTemplate({ name, confirmUrl });
   await getMailProvider().send({ to: address, kind: 'auth_verify', ...mail, idempotencyKey: `auth_verify:${data.user.id}:${data.properties.hashed_token.slice(0, 16)}` });
-  return { ok: true, message: SIGNUP_DONE };
+  return isLocalDevelopment() ? { ok: true, message: SIGNUP_DONE_LOCAL, devConfirmUrl: confirmUrl } : { ok: true, message: SIGNUP_DONE };
 }
 
 export async function signInAction(_prev: FormState, formData: FormData): Promise<FormState> {
