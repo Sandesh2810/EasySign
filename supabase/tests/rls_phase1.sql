@@ -11,6 +11,7 @@ declare
   env_a uuid; doc_a uuid; rcp_a uuid; code_a text; obj_path text;
   n int; t text; v record;
   procedure_dummy int;
+  e4 uuid;
 begin
   -- ---------- setup as the migration role ----------
   insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -259,6 +260,150 @@ begin
   begin perform public.update_envelope_draft(a, env_a, 'x', '', null); n := n + 1; exception when insufficient_privilege then null; end;
   if n = 0 then res := res || E'PASS T50 signed-in users cannot call the draft functions directly\n'; else res := res || 'FAIL T50 :: ' || n || E' callable\n'; end if;
 
+  -- ---------- send, sign, seal (migration 7), as the service role ----------
+  execute 'set local role service_role';
+  declare
+    d4 uuid; r4 uuid; f_sig uuid; f_txt uuid; f_date uuid; tok uuid := gen_random_uuid(); tok_hash text := repeat('7a', 32);
+    toks jsonb; exp timestamptz := now() + interval '30 days'; job record; ok boolean; cnt int; st text; code4 text; ob record;
+  begin
+    update public.account_controls set storage_quota_bytes = 52428800, approved = false where user_id = a;
+    select e.id, e.public_code into e4, code4 from public.create_envelope(a, org_a, 'Flow test', folder_a) e;
+    select d.id into d4 from public.add_envelope_document(a, e4, 'f.pdf', 'supabase', org_a || '/' || e4 || '/d1', repeat('aa', 32), 1, 900, '[]', 'pdf') d;
+
+    begin perform public.send_envelope(a, e4, '[]', exp, 'link');
+      res := res || E'FAIL T52 sent with no signer\n';
+    exception when invalid_parameter_value then res := res || E'PASS T52 a document cannot be sent without a signer\n'; end;
+
+    select x.id into r4 from public.save_recipients(a, e4, '[{"name":"Sam Signer","email":"sam@example.test","role":"signer","routing_order":1}]') x limit 1;
+    toks := jsonb_build_array(jsonb_build_object('recipient_id', r4, 'token_id', tok, 'nonce', repeat('0b', 16), 'token_sha256', tok_hash));
+
+    begin perform public.send_envelope(a, e4, toks, exp, 'email');
+      res := res || E'FAIL T53 sent with no signature field\n';
+    exception when invalid_parameter_value then res := res || E'PASS T53 a document cannot be sent without a signature field for the signer\n'; end;
+
+    perform public.save_fields(a, e4, jsonb_build_array(
+      jsonb_build_object('document_id', d4, 'recipient_id', r4, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.7, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d4, 'recipient_id', r4, 'type', 'date_signed', 'page', 1, 'x', 0.5, 'y', 0.7, 'w', 0.2, 'h', 0.03),
+      jsonb_build_object('document_id', d4, 'recipient_id', r4, 'type', 'text', 'page', 1, 'x', 0.5, 'y', 0.8, 'w', 0.2, 'h', 0.03)));
+    select f.id into f_sig from public.fields f where f.envelope_id = e4 and f.type = 'signature';
+    select f.id into f_txt from public.fields f where f.envelope_id = e4 and f.type = 'text';
+    select f.id into f_date from public.fields f where f.envelope_id = e4 and f.type = 'date_signed';
+
+    begin perform public.send_envelope(a, e4, toks, exp, 'email');
+      res := res || E'FAIL T54 an unapproved account sent to another person\n';
+    exception when insufficient_privilege then res := res || E'PASS T54 AT1.3: in approval mode an unapproved account cannot send to other people\n'; end;
+
+    update public.account_controls set approved = true where user_id = a;
+    update public.usage_counters set envelopes_sent = 3 where user_id = a;
+    insert into public.usage_counters (day, user_id, envelopes_sent) values ((now() at time zone 'UTC')::date, a, 3) on conflict (day, user_id) do update set envelopes_sent = 3;
+    begin perform public.send_envelope(a, e4, toks, exp, 'email');
+      res := res || E'FAIL T55 a restricted account sent a 4th document in one day\n';
+    exception when configuration_limit_exceeded then res := res || E'PASS T55 AT1.3: a new account is stopped at 3 documents a day\n'; end;
+    update public.usage_counters set envelopes_sent = 0 where user_id = a;
+
+    perform public.send_envelope(a, e4, toks, exp, 'email');
+    select count(*) into cnt from public.notification_outbox o where o.envelope_id = e4 and o.kind = 'signature_request' and o.priority = 'P0_REQUEST' and o.payload = '{}'::jsonb;
+    if (select e.status from public.envelopes e where e.id = e4) = 'sent' and cnt = 1
+       and (select x.status from public.recipients x where x.id = r4) = 'sent'
+       and (select k.token_sha256 from public.recipient_tokens k where k.id = tok) = decode(tok_hash, 'hex')
+       and exists (select 1 from public.audit_events x where x.chain_key = 'env:' || e4 and x.event_type = 'envelope_sent')
+       and exists (select 1 from public.audit_events x where x.chain_key = 'env:' || e4 and x.event_type = 'email_queued')
+    then res := res || E'PASS T56 AT1.5: sending stores only the hash of the link; the outbox row carries no link; send and queue are audited\n';
+    else res := res || E'FAIL T56 send_envelope result\n'; end if;
+
+    begin perform public.send_envelope(a, e4, toks, exp, 'email');
+      res := res || E'FAIL T57 sent twice\n';
+    exception when insufficient_privilege then res := res || E'PASS T57 a document cannot be sent twice\n'; end;
+
+    select count(*) into cnt from public.signer_open(repeat('00', 32), '203.0.113.9', 'ua');
+    select * into job from public.signer_open(tok_hash, '203.0.113.9', 'ua');
+    if cnt = 0 and job.token_id = tok and job.recipient_status = 'viewed' and job.envelope_status = 'in_progress'
+    then res := res || E'PASS T58 an unknown link opens nothing; the real link marks the signer as viewed and the envelope in progress\n';
+    else res := res || E'FAIL T58 signer_open\n'; end if;
+
+    begin perform public.signer_fill_field(tok, f_txt, 'Acme Ltd', '203.0.113.9', 'ua');
+      res := res || E'FAIL T59 field filled before consent\n';
+    exception when insufficient_privilege then res := res || E'PASS T59 nothing can be filled in before consent is given\n'; end;
+
+    perform public.signer_consent(tok, 'esign-consent-v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(tok, 'esign-consent-v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    select count(*) into cnt from public.consents c where c.recipient_id = r4;
+    if cnt = 1 and (select x.status from public.recipients x where x.id = r4) = 'consented'
+    then res := res || E'PASS T60 consent is recorded once with its version hash, IP and browser\n'; else res := res || E'FAIL T60 consent\n'; end if;
+
+    n := 0;
+    begin perform public.signer_fill_field(tok, f_sig, 'x', null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_fill_field(tok, (select f.id from public.fields f where f.envelope_id = env_a limit 1), 'x', null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_fill_field(gen_random_uuid(), f_txt, 'x', null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    if n = 0 then res := res || E'PASS T61 a signer cannot type into a signature field, another envelope''s field, or act with a made-up link id\n';
+    else res := res || 'FAIL T61 :: ' || n || E'\n'; end if;
+
+    begin perform public.signer_complete(tok, repeat('d1', 32), '2026-11-17', '203.0.113.9', 'ua');
+      res := res || E'FAIL T62 completed without a signature\n';
+    exception when invalid_parameter_value then res := res || E'PASS T62 the signer cannot finish without creating a signature\n'; end;
+
+    perform public.signer_adopt_signature(tok, 'signature', 'drawn', 'supabase', org_a || '/' || e4 || '/sig1.png', repeat('5a', 32), null, null, '203.0.113.9', 'ua');
+    begin perform public.signer_complete(tok, repeat('d1', 32), '2026-11-17', '203.0.113.9', 'ua');
+      res := res || E'FAIL T63 completed with a required field empty\n';
+    exception when invalid_parameter_value then res := res || E'PASS T63 the signer cannot finish while a required field is empty\n'; end;
+
+    perform public.signer_fill_field(tok, f_txt, '  Acme Ltd  ', '203.0.113.9', 'ua');
+    st := public.signer_complete(tok, repeat('d1', 32), '2026-11-17', '203.0.113.9', 'ua');
+    if st = 'sealing'
+       and (select v2.signature_id from public.field_values v2 where v2.field_id = f_sig) = code4 || '-S1'
+       and (select v2.value_text from public.field_values v2 where v2.field_id = f_date) = '2026-11-17'
+       and (select v2.value_text from public.field_values v2 where v2.field_id = f_txt) = 'Acme Ltd'
+       and (select x.status from public.recipients x where x.id = r4) = 'signed'
+       and exists (select 1 from public.seal_jobs j where j.envelope_id = e4 and j.status = 'queued')
+       and (select e.status from public.envelopes e where e.id = e4) = 'in_progress'
+    then res := res || E'PASS T64 finishing applies the signature with id <code>-S1, fills the date, marks the signer signed and queues sealing\n';
+    else res := res || 'FAIL T64 signer_complete :: ' || coalesce(st, 'null') || E'\n'; end if;
+
+    begin perform public.signer_complete(tok, repeat('d1', 32), '2026-11-17', null, null);
+      res := res || E'FAIL T65 signed twice\n';
+    exception when insufficient_privilege then res := res || E'PASS T65 a signer cannot sign twice\n'; end;
+
+    select * into job from public.claim_seal_job(300);
+    select count(*) into cnt from public.claim_seal_job(300);
+    if job.envelope_id = e4 and job.attempts = 1 and job.audit_hash ~ '^[0-9a-f]{64}$' and cnt = 0
+    then res := res || E'PASS T66 the seal job is claimed once; a second worker gets nothing while the lease is held\n';
+    else res := res || E'FAIL T66 claim_seal_job\n'; end if;
+
+    ok := public.complete_seal_job(e4, gen_random_uuid(), repeat('e1', 32), repeat('e2', 32), 'supabase', org_a || '/' || e4 || '/sealed.pdf', org_a || '/' || e4 || '/cert.pdf', job.audit_seq, job.audit_hash);
+    if ok then res := res || E'FAIL T67 a worker with a stale attempt id finalised the envelope\n';
+    else res := res || E'PASS T67 a worker whose attempt id is stale cannot finalise (no double sealing)\n'; end if;
+
+    begin perform public.complete_seal_job(e4, job.attempt_id, repeat('e1', 32), repeat('e2', 32), 'supabase', org_a || '/' || e4 || '/sealed.pdf', org_a || '/' || e4 || '/cert.pdf', job.audit_seq, repeat('ff', 32));
+      res := res || E'FAIL T68 sealed with a checkpoint that is not in the chain\n';
+    exception when invalid_parameter_value then res := res || E'PASS T68 sealing is refused if the audit checkpoint does not match the chain\n'; end;
+
+    ok := public.complete_seal_job(e4, job.attempt_id, repeat('e1', 32), repeat('e2', 32), 'supabase', org_a || '/' || e4 || '/sealed.pdf', org_a || '/' || e4 || '/cert.pdf', job.audit_seq, job.audit_hash);
+    select count(*) into cnt from public.notification_outbox o where o.envelope_id = e4 and o.kind in ('completion_copy', 'completion_sender') and o.priority = 'P1';
+    if ok and cnt = 2
+       and exists (select 1 from public.envelopes e where e.id = e4 and e.status = 'completed' and e.final_sha256 = repeat('e2', 32) and e.audit_seal_seq = job.audit_seq and e.folder_id = folder_a and e.sealed_at is not null)
+       and exists (select 1 from public.notifications x where x.user_id = a and x.kind = 'envelope_completed')
+    then res := res || E'PASS T69 AT1.10: completion records hashes and checkpoint, keeps the chosen folder and queues a copy for every party\n';
+    else res := res || 'FAIL T69 complete_seal_job :: ok=' || ok || ' copies=' || cnt || E'\n'; end if;
+
+    begin perform public.signer_fill_field(tok, f_txt, 'changed after completion', null, null);
+      res := res || E'FAIL T70 a field changed after completion\n';
+    exception when insufficient_privilege then res := res || E'PASS T70 nothing can be changed through the signing link after completion\n'; end;
+
+    select * into ob from public.claim_outbox(1, 120);
+    st := public.finish_outbox(ob.id, 'sent', null, 'log-1', null);
+    if ob.kind = 'signature_request' and st = 'sent' and public.finish_outbox(ob.id, 'sent', null, 'log-1', null) = 'ignored'
+       and exists (select 1 from public.audit_events x where x.chain_key = 'env:' || e4 and x.event_type = 'email_sent')
+    then res := res || E'PASS T71 the outbox hands out the signature request first; marking it sent twice has no second effect\n';
+    else res := res || 'FAIL T71 outbox :: ' || coalesce(ob.kind, 'none') || ' ' || coalesce(st, 'null') || E'\n'; end if;
+
+    perform public.email_budget_record('P0_REQUEST', a, true);
+    perform public.email_budget_record('P0_AUTH', null, false);
+    select * into job from public.email_budget_state(a);
+    if job.sent_today_shared >= 1 and job.sent_today_auth >= 1 and job.restricted_sent_today >= 1 and job.user_sent_today >= 1 and job.days_left_in_month between 1 and 31
+    then res := res || E'PASS T72 email budget counters record by class, by sender and for restricted accounts\n'; else res := res || E'FAIL T72 email budget\n'; end if;
+    update public.account_controls set approved = false where user_id = a;
+  end;
+
   -- ---------- storage immutability and freezing (migration role) ----------
   execute 'reset role';
   begin update storage.objects set metadata = '{"size":2}', version = 'v2' where bucket_id = 'originals' and name = obj_path;
@@ -292,6 +437,17 @@ begin
   begin perform public.update_envelope_draft(a, env_a, 'new title', '', null); n := n + 1; exception when insufficient_privilege then null; end;
   begin perform public.delete_draft_envelope(a, env_a); n := n + 1; exception when insufficient_privilege then null; end;
   if n = 0 then res := res || E'PASS T51 once sent, the owner cannot edit fields, recipients or details, or delete the envelope\n'; else res := res || 'FAIL T51 :: ' || n || E' edit(s) got through after send\n'; end if;
+
+  select * into v from app_private.audit_verify('env:' || e4);
+  if v.ok and v.events >= 12 then res := res || 'PASS T73 AT1.9: the full send-sign-seal chain verifies end to end (' || v.events || E' events)\n';
+  else res := res || 'FAIL T73 flow chain :: ' || coalesce(v.reason, '?') || ' events=' || v.events || E'\n'; end if;
+
+  begin
+    perform app_private.sanction();
+    update public.envelopes set title = 'changed after completion' where id = e4;
+    res := res || E'FAIL T74 a completed envelope was modified\n';
+  exception when insufficient_privilege then res := res || E'PASS T74 AT2.2: a completed envelope cannot be modified, even by a sanctioned function\n'; end;
+  perform set_config('easysign.sanctioned', '', true);
 
   -- ---------- audit chain ----------
   perform app_private.audit_append('env:' || env_a, org_a, env_a, rcp_a, 'signer', null, 'link_opened', '{"n":1}', '203.0.113.7', 'test-agent');
