@@ -19,6 +19,11 @@ const nextConfig: NextConfig = {
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
         ],
       },
+      {
+        // the public check page answers for a specific code: never kept by a browser or a shared cache
+        source: "/verify",
+        headers: [{ key: "Cache-Control", value: "no-store" }],
+      },
     ];
   },
   turbopack: {

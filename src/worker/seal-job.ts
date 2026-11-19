@@ -161,6 +161,7 @@ export async function runOneSealJob(log: (msg: string) => void): Promise<'none' 
       p_certificate_path: certificatePath,
       p_audit_seq: job.audit_seq,
       p_audit_hash: job.audit_hash,
+      p_seal_key_id: out.sealKeyId,
     });
     if (done.error) throw new Error(`complete_seal_job: ${done.error.message}`);
     if (done.data !== true) {
