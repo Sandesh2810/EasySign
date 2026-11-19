@@ -1,7 +1,7 @@
 'use server';
 // Sign-up, sign-in, email confirmation and sign-out.
 // Sign-up never lets Supabase send the email: the server asks the Auth admin API to generate the
-// confirmation link and delivers it through EasySign's own mailer (DECISIONS D-31), so the email
+// confirmation link and delivers it through YouNMeSign's own mailer (DECISIONS D-31), so the email
 // goes to the dev outbox in log mode and through the email budget later.
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
@@ -38,7 +38,7 @@ const signInSchema = z.object({ email, password: z.string().min(1).max(200) });
 const SIGNUP_DONE =
   'If this address can be registered, a confirmation link is on its way. Open it to finish creating your account.' +
   (NOTIFY_MODE === 'log' ? ' (Development mode: the email was written to the app\\.dev-outbox folder instead of being sent.)' : '');
-const SIGNUP_DONE_LOCAL = 'Your account is created. Nothing was emailed, because this copy of EasySign runs only on this computer. Press the button below to confirm your email address and finish.';
+const SIGNUP_DONE_LOCAL = 'Your account is created. Nothing was emailed, because this copy of YouNMeSign runs only on this computer. Press the button below to confirm your email address and finish.';
 
 export async function signUpAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = signUpSchema.safeParse({ name: formData.get('name'), email: formData.get('email'), password: formData.get('password') });

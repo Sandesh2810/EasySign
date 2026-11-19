@@ -12,7 +12,7 @@ describe('email templates', () => {
   it('verification email carries the link in both the HTML and the plain-text part', () => {
     const url = 'http://localhost:3000/auth/confirm?token_hash=abc123&type=signup';
     const t = verifyEmailTemplate({ name: 'Alice', confirmUrl: url });
-    expect(t.subject).toBe('Confirm your email for EasySign');
+    expect(t.subject).toBe('Confirm your email for YouNMeSign');
     expect(t.html).toContain('href="http://localhost:3000/auth/confirm?token_hash=abc123&amp;type=signup"');
     expect(t.text).toContain(url);
     expect(t.text).toContain('Hello Alice,');

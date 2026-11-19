@@ -44,7 +44,7 @@ const statusOf = async (id: string) => (await db.from('recipients').select('stat
 beforeAll(async () => {
   if (!SUPABASE_URL || !SECRET || !TOKEN_KEY) throw new Error('Settings are missing. Run "npm run setup:env" (or double-click Enter-Supabase-Key.cmd).');
   const alive = await fetch(`${APP}/login`).then((r) => r.ok).catch(() => false);
-  if (!alive) throw new Error(`The app is not running at ${APP}. Start it first (npm run dev, or double-click Start-EasySign.cmd), then run this again.`);
+  if (!alive) throw new Error(`The app is not running at ${APP}. Start it first (npm run dev, or double-click Start-YouNMeSign.cmd), then run this again.`);
   db = createClient(SUPABASE_URL, SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
 
   const list = await db.auth.admin.listUsers({ page: 1, perPage: 200 });

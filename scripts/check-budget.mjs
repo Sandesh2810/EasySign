@@ -1,5 +1,5 @@
 // npm run check:budget
-// Reports how much of each free-tier limit the EasySign project is using: database size, stored files,
+// Reports how much of each free-tier limit the YouNMeSign project is using: database size, stored files,
 // registered users, emails today and this month. Warns from 70%. Exits with an error (so a phase
 // verification fails) when anything is above 80%. Prints no secrets. Works in cmd.exe.
 import { existsSync } from 'node:fs';
@@ -31,7 +31,7 @@ const metrics = assess({
 });
 
 const WORD = { ok: 'ok', warn: 'WARNING (70% or more)', fail: 'TOO HIGH (above 80%)', block: 'FULL (90% or more: new sign-ups and uploads are refused)' };
-console.log('EasySign free-tier check');
+console.log('YouNMeSign free-tier check');
 console.log('------------------------');
 for (const m of metrics) {
   const pct = `${(m.share * 100).toFixed(1)}%`.padStart(6);

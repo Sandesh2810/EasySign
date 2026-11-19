@@ -3,7 +3,8 @@
 // SHA-256 of the exact text are stored with every consent and printed on the certificate.
 import { PRODUCT_NAME } from './brand';
 
-export const CONSENT_VERSION = 'esign-consent-2026-11-v1';
+// v2 (2026-11-19): the product is now called YouNMeSign; the wording is otherwise unchanged.
+export const CONSENT_VERSION = 'esign-consent-2026-11-v2';
 
 export const CONSENT_PARAGRAPHS: readonly string[] = [
   `You have been asked to review and sign a document electronically using ${PRODUCT_NAME}.`,

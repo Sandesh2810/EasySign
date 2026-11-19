@@ -68,6 +68,16 @@ export function verifySession(cookie: string, key: string, opts: { now?: Date } 
 
 export const generateOtp = (): string => String(randomInt(0, 1_000_000)).padStart(6, '0');
 
+/**
+ * The six-digit code for one code email (one outbox row). It is derived from the row id with a secret key, so a
+ * retried email carries the SAME code as the first attempt: the provider may already have delivered that one
+ * (review finding m2, D-63). Without the key it cannot be predicted from the row id.
+ */
+export function otpForOutboxRow(key: string, outboxRowId: string): string {
+  const mac = createHmac('sha256', keyBytes(key)).update('easysign.otp-code.v1|').update(outboxRowId).digest();
+  return String(mac.readUInt32BE(0) % 1_000_000).padStart(6, '0');
+}
+
 /** OTPs are stored only as a keyed hash bound to the recipient. */
 export function hashOtp(otp: string, recipientId: string, key: string): Buffer {
   return createHmac('sha256', keyBytes(key)).update('easysign.otp.v1|').update(recipientId).update('|').update(otp).digest();

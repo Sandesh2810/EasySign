@@ -30,7 +30,7 @@ export function ReportAbuse({ token, startOpen = false }: { token?: string; star
   if (done) {
     return (
       <Notice tone="success">
-        {done === 'already' ? 'You have already reported this document. The EasySign administrators have your report.' : 'Thank you. Your report has gone to the EasySign administrators, who will look at it.'} You do
+        {done === 'already' ? 'You have already reported this document. The YouNMeSign administrators have your report.' : 'Thank you. Your report has gone to the YouNMeSign administrators, who will look at it.'} You do
         not have to sign anything. If you think you are being defrauded, do not send money or personal details to anyone because of this document.
       </Notice>
     );
@@ -46,7 +46,7 @@ export function ReportAbuse({ token, startOpen = false }: { token?: string; star
     <form onSubmit={submit} className="flex max-w-xl flex-col gap-3 rounded-md border border-hairline p-4">
       <h2 className="text-base font-medium text-ink">Report this document</h2>
       <p className="text-sm text-ink-body">
-        Tell us what is wrong, for example that you do not know the sender or that it asks for something suspicious. Your report goes to the people who run EasySign, not to the sender. Reporting does
+        Tell us what is wrong, for example that you do not know the sender or that it asks for something suspicious. Your report goes to the people who run YouNMeSign, not to the sender. Reporting does
         not sign or decline anything.
       </p>
       <div className="flex flex-col gap-1.5">

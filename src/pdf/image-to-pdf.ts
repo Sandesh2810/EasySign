@@ -61,7 +61,7 @@ export async function imageToPdf(bytes: Uint8Array): Promise<ImageToPdfResult> {
   const doc = await PDFDocument.create();
   const img = await doc.embedJpg(jpeg);
   doc.addPage([pageW, pageH]).drawImage(img, { x: 0, y: 0, width: pageW, height: pageH });
-  doc.setProducer('EasySign');
+  doc.setProducer('YouNMeSign');
   const pdf = await doc.save({ useObjectStreams: false });
   return { ok: true, pdf, pixelWidth: width, pixelHeight: height, flattened: hadAlpha };
 }

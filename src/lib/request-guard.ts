@@ -19,7 +19,7 @@ export function isSameOrigin(request: NextRequest): boolean {
 }
 
 export async function requireApiUser(request: NextRequest, opts: { mutation: boolean }): Promise<{ user: SessionUser } | { response: NextResponse }> {
-  if (opts.mutation && !isSameOrigin(request)) return { response: json(403, { error: 'This request did not come from EasySign.' }) };
+  if (opts.mutation && !isSameOrigin(request)) return { response: json(403, { error: 'This request did not come from YouNMeSign.' }) };
   const user = await getUser();
   if (!user) return { response: json(401, { error: 'Your session has ended. Sign in again.' }) };
   return { user };

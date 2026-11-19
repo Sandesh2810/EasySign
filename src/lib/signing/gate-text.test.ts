@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { otpTemplate } from '@/mail/templates';
-import { generateOtp, hashOtp } from '@/lib/signer-token';
+import { generateOtp, hashOtp, otpForOutboxRow } from '@/lib/signer-token';
 import { lockedMessage, triesLeft } from './gate-text';
 
 const NOW = new Date('2026-11-18T12:00:00Z');
@@ -34,6 +34,16 @@ describe('emailed code', () => {
     expect(a.equals(hashOtp('123457', 'person-a', KEY))).toBe(false);
     expect(a.equals(hashOtp('123456', 'person-a', Buffer.alloc(32, 8).toString('base64url')))).toBe(false); // useless without the key
     expect(a.toString('hex')).not.toContain('123456');
+  });
+
+  it('the code for one email is the same on every attempt, different for another email, and needs the key', () => {
+    const row = '0b8e4f0e-7d3c-4a51-9a2b-6f1f3a9c2d10';
+    const first = otpForOutboxRow(KEY, row);
+    expect(first).toMatch(/^\d{6}$/);
+    expect(otpForOutboxRow(KEY, row)).toBe(first); // a retry repeats the delivered code
+    const others = new Set(Array.from({ length: 50 }, (_, i) => otpForOutboxRow(KEY, `${row.slice(0, -2)}${String(i).padStart(2, '0')}`)));
+    expect(others.size).toBeGreaterThan(45); // different emails, different codes
+    expect(otpForOutboxRow(Buffer.alloc(32, 9).toString('base64url'), row)).not.toBe(first);
   });
 
   it('the email shows the code, how long it works, and no link at all', () => {

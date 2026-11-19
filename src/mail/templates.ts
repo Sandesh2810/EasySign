@@ -27,7 +27,7 @@ function layout(opts: { preheader: string; heading: string; paragraphs: string[]
 <div style="display:none;max-height:0;overflow:hidden;">${esc(opts.preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f4ef;"><tr><td align="center" style="padding:32px 16px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:24px;"><tr><td style="padding:36px 32px;">
-<p style="margin:0 0 24px;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;color:#5e5a55;">${esc(PRODUCT_NAME)}</p>
+<p style="margin:0 0 24px;font-size:14px;letter-spacing:0.02em;color:#5e5a55;">${esc(PRODUCT_NAME)}</p>
 <h1 style="margin:0 0 20px;font-size:26px;line-height:32px;font-weight:400;color:#1a1818;">${esc(opts.heading)}</h1>
 ${p}${button}
 ${opts.footnote ? `<p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #e3e0d7;font-size:13px;line-height:20px;color:#5e5a55;">${opts.footnote}</p>` : ''}

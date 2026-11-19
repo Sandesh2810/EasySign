@@ -24,7 +24,7 @@ export class MailRefusedError extends Error {
 
 export interface ResendOptions {
   apiKey: string;
-  /** e.g. "EasySign <notify@easysign.work.gd>" */
+  /** e.g. "YouNMeSign <notify@younmesign.com>" */
   from: string;
   mode: 'sandbox' | 'live';
   /** sandbox only: the addresses that may receive email */
@@ -38,7 +38,7 @@ const oneLine = (s: string) => s.replace(/[\r\n]+/g, ' ').trim();
 
 export function checkFromAddress(from: string): string | null {
   const m = /^(?:[^<>"\r\n]{1,60} )?<([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)>$|^([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)$/.exec(from.trim());
-  return m ? null : 'MAIL_FROM must look like "EasySign <notify@your-domain>" or "notify@your-domain".';
+  return m ? null : 'MAIL_FROM must look like "YouNMeSign <notify@your-domain>" or "notify@your-domain".';
 }
 
 export class ResendMailProvider implements MailProvider {

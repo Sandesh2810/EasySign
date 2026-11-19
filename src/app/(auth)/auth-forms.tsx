@@ -23,7 +23,7 @@ function OAuthButtons({ next }: { next: string }) {
     const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
     const { error: e } = await supabase.auth.signInWithOAuth({
       provider,
-      // Least privilege: identity only. EasySign never asks for mailbox access.
+      // Least privilege: identity only. YouNMeSign never asks for mailbox access.
       options: { redirectTo, scopes: provider === 'azure' ? 'openid email profile' : undefined },
     });
     if (e) {

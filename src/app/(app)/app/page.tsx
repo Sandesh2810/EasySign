@@ -114,7 +114,7 @@ async function Dashboard({ searchParams }: { searchParams: Promise<Search> }) {
           </h2>
           <form action="/app" method="get" role="search" className="flex flex-wrap items-end gap-3">
             {view !== 'all' ? <input type="hidden" name="view" value={view} /> : null}
-            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <div className="flex min-w-0 flex-1 basis-full flex-col gap-1.5 sm:basis-auto">
               <label htmlFor="doc-search" className="text-sm font-medium text-ink">
                 Search
               </label>

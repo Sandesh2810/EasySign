@@ -24,7 +24,7 @@ async function AccountMenu() {
   const unreadCount = unread.count ?? 0;
   return (
     <div className="flex items-center gap-3">
-      <Link href="/app/notifications" className="text-sm font-medium text-ink">
+      <Link href="/app/notifications" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
         Notifications
         {unreadCount > 0 ? (
           <span className="ml-1.5 inline-flex min-w-6 items-center justify-center rounded-pill bg-ink px-1.5 py-0.5 text-xs font-medium text-on-ink">
@@ -34,7 +34,7 @@ async function AccountMenu() {
         ) : null}
       </Link>
       {controls?.is_platform_admin ? (
-        <Link href="/app/admin" className="text-sm font-medium text-ink">
+        <Link href="/app/admin" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
           Accounts
         </Link>
       ) : null}
@@ -53,7 +53,7 @@ export default function AppLayout({ children }: LayoutProps<'/'>) {
     <div className="min-h-dvh bg-surface-sand">
       <header className="border-b border-hairline bg-surface">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <Link href="/app" className="text-lg font-medium text-ink no-underline">
+          <Link href="/app" className="inline-flex min-h-11 items-center text-lg font-medium text-ink no-underline">
             {PRODUCT_NAME}
           </Link>
           <Suspense fallback={<span className="text-sm text-ink-muted">Loading…</span>}>

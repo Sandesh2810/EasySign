@@ -1,5 +1,5 @@
 // Access codes (brief: "sender-defined, hashed with Argon2id or scrypt"; DECISIONS D-59).
-// The sender invents a code and gives it to the signer personally. EasySign stores only a slow,
+// The sender invents a code and gives it to the signer personally. YouNMeSign stores only a slow,
 // salted scrypt hash, so the code cannot be read back by anyone, including the sender.
 // Server-only: uses node:crypto. No extra package is needed.
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';

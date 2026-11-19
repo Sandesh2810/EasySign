@@ -1117,7 +1117,7 @@ begin
     select * into r1 from public.signer_request_otp(t_mail, '203.0.113.9', 'ua');
     select o.id into oid from public.notification_outbox o where o.recipient_id = g_mail and o.kind = 'otp';
     if r1.status <> 'queued' or (select status from public.signer_request_otp(t_mail, null, null)) <> 'wait' then n := n + 1; end if;      -- not twice within a minute
-    if (select o.priority || '|' || o.status || '|' || o.payload::text || '|' || (o.sender_user_id is null)::text from public.notification_outbox o where o.id = oid) <> 'P0_AUTH|queued|{}|true' then n := n + 1; end if;
+    if (select o.priority || '|' || o.status || '|' || o.payload::text || '|' || (o.sender_user_id is null)::text from public.notification_outbox o where o.id = oid) <> 'P0_REQUEST|queued|{}|false' then n := n + 1; end if;  -- since migration 19 (D-63): sent on the sender's behalf
     if (select x.otp_hash is not null from public.recipient_auth x where x.recipient_id = g_mail) then n := n + 1; end if;                 -- no code exists until the worker sends the email
     select * into r2 from public.signer_verify_otp(t_mail, good, null, null);
     if r2.status <> 'expired' or r2.attempts_left <> 5 then n := n + 1; end if;                                                             -- nothing to compare with: not counted

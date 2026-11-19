@@ -91,7 +91,7 @@ describe('buildSealedPdf', () => {
 
   it('AT1.7: every page, certificate included, carries the footer with code, page n of N and the verify address', () => {
     pages.forEach((p, i) => {
-      expect(p.text).toContain(`EasySign · Envelope ${CODE} · Page ${i + 1} of ${out.pageCount}`);
+      expect(p.text).toContain(`YouNMeSign · Envelope ${CODE} · Page ${i + 1} of ${out.pageCount}`);
       expect(p.text).toContain(`Verify: sign.example.test/verify?code=${CODE}`);
     });
   });

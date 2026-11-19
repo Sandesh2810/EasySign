@@ -28,9 +28,9 @@ const res = await fetch('https://api.resend.com/emails', {
   body: JSON.stringify({
     from,
     to: [to],
-    subject: 'EasySign test email',
-    text: `This is a test from EasySign, sent ${new Date().toISOString()}.\n\nIf you can read this, sending works. To check that the domain is set up correctly, open this email's details ("Show original" in Gmail) and look for SPF, DKIM and DMARC: each should say PASS.`,
-    html: `<p>This is a test from EasySign, sent ${new Date().toISOString()}.</p><p>If you can read this, sending works. To check that the domain is set up correctly, open this email's details (&ldquo;Show original&rdquo; in Gmail) and look for SPF, DKIM and DMARC: each should say PASS.</p>`,
+    subject: 'YouNMeSign test email',
+    text: `This is a test from YouNMeSign, sent ${new Date().toISOString()}.\n\nIf you can read this, sending works. To check that the domain is set up correctly, open this email's details ("Show original" in Gmail) and look for SPF, DKIM and DMARC: each should say PASS.`,
+    html: `<p>This is a test from YouNMeSign, sent ${new Date().toISOString()}.</p><p>If you can read this, sending works. To check that the domain is set up correctly, open this email's details (&ldquo;Show original&rdquo; in Gmail) and look for SPF, DKIM and DMARC: each should say PASS.</p>`,
   }),
 }).catch(() => null);
 if (!res) stop('Resend could not be reached. Check the internet connection and try again.');

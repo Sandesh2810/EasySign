@@ -5,7 +5,7 @@ import { loadBudget } from '@/lib/email-budget-state';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 const LIMIT_REASON: Record<AllowanceLimit, string> = {
-  day: 'EasySign runs on a free email service with a fixed number of emails a day, shared by everyone who uses it.',
+  day: 'YouNMeSign runs on a free email service with a fixed number of emails a day, shared by everyone who uses it.',
   month: 'The monthly email allowance is nearly used up, so each remaining day gets a smaller share.',
   'new-accounts': 'New accounts share a smaller daily allowance until an administrator marks them as trusted.',
   you: 'Each account has its own daily email limit, so one person cannot use up everyone’s share.',
@@ -82,7 +82,7 @@ export async function EmailMeter({ userId }: { userId: string }) {
         </p>
       ) : null}
       <details className="mt-2 text-sm text-ink-muted">
-        <summary className="cursor-pointer">Why is there a limit?</summary>
+        <summary className="min-h-11 cursor-pointer py-2.5">Why is there a limit?</summary>
         <p className="mt-1">{LIMIT_REASON[requests.limitedBy]}</p>
       </details>
     </section>

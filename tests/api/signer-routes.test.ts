@@ -1,6 +1,6 @@
 // End-to-end checks of the signer-facing routes against the RUNNING app (AT2.1 "out-of-turn gets 403 +
 // audit event", carried Phase 1 item "API-level tests for the signer routes").
-// Run: start the app (npm run dev, or Start-EasySign.cmd), then  npm run test:api
+// Run: start the app (npm run dev, or Start-YouNMeSign.cmd), then  npm run test:api
 // It prepares one document for a fixed synthetic sender through the same server-only database functions
 // the app uses, then talks to the app over HTTP exactly as a signer's browser would.
 // Nothing is emailed (links are "shared by the sender"). Each run leaves one small declined test document
@@ -53,7 +53,7 @@ const auditCount = async (type: string, recipientId?: string) => {
 beforeAll(async () => {
   if (!SUPABASE_URL || !SECRET || !TOKEN_KEY) throw new Error('Settings are missing. Run "npm run setup:env" (or double-click Enter-Supabase-Key.cmd).');
   const alive = await fetch(`${APP}/login`).then((r) => r.ok).catch(() => false);
-  if (!alive) throw new Error(`The app is not running at ${APP}. Start it first (npm run dev, or double-click Start-EasySign.cmd), then run this again.`);
+  if (!alive) throw new Error(`The app is not running at ${APP}. Start it first (npm run dev, or double-click Start-YouNMeSign.cmd), then run this again.`);
   db = createClient(SUPABASE_URL, SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
 
   // a fixed synthetic sender, reused by every run; its password is random and never used

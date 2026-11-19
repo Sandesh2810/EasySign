@@ -1,7 +1,7 @@
 // Product constants. Changeable without touching feature code.
 // Runtime-switchable settings (REGISTRATION_MODE, quotas) live in the platform_settings table.
 
-export const PRODUCT_NAME = 'EasySign';
+export const PRODUCT_NAME = 'YouNMeSign';
 export const DEFAULT_TIMEZONE = 'America/Chicago';
 export const THEME = 'AlterMe';
 
@@ -27,4 +27,4 @@ export const LIMITS = {
 } as const;
 
 export const NO_PHI_NOTICE =
-  'Do not upload documents containing protected health information (PHI). EasySign is for business contracts only.';
+  'Do not upload documents containing protected health information (PHI). YouNMeSign is for business contracts only.';

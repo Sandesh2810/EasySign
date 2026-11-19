@@ -34,7 +34,7 @@ function passed(ctx: SignerContext) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!isSameOrigin(request)) return json(403, { error: 'This request did not come from EasySign.' });
+  if (!isSameOrigin(request)) return json(403, { error: 'This request did not come from YouNMeSign.' });
   if (!(await allow({ bucket: 'sign_gate_ip', limit: 40, windowSeconds: 900 }, await clientIp()))) return json(429, { error: TOO_MANY });
   const parsed = body.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json(400, { error: 'That request was not understood. Reload the page and try again.' });

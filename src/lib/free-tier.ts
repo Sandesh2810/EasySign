@@ -70,7 +70,7 @@ export function capacityBlock(usage: PlatformUsage): { blocked: false } | { bloc
   if (full.length === 0) return { blocked: false };
   return {
     blocked: true,
-    message: 'EasySign is close to the limit of its free hosting plan, so this is switched off for the moment. Nothing you already have is affected. Please try again later, or contact the administrator.',
+    message: 'YouNMeSign is close to the limit of its free hosting plan, so this is switched off for the moment. Nothing you already have is affected. Please try again later, or contact the administrator.',
   };
 }
 

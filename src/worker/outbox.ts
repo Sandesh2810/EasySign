@@ -4,7 +4,7 @@
 import { env } from '@/lib/env';
 import { loadBudget } from '@/lib/email-budget-state';
 import { describeNotification } from '@/lib/notifications';
-import { generateOtp, hashOtp } from '@/lib/signer-token';
+import { hashOtp, otpForOutboxRow } from '@/lib/signer-token';
 import { byteaToBuffer, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
@@ -65,7 +65,8 @@ async function prepareOtp(row: OutboxRow): Promise<Prepared> {
     db.from('envelopes').select('title').eq('id', row.envelope_id).maybeSingle(),
   ]);
   if (!recipient || !envelope) throw new Error('recipient not found');
-  const code = generateOtp();
+  // the same code on every attempt for this email (a retry must not invalidate a code already delivered)
+  const code = otpForOutboxRow(env.signerTokenKey(), row.id);
   const hash = hashOtp(code, row.recipient_id, env.signerTokenKey());
   // The database refuses a request that is stale, replaced by a newer one, locked, or made through a dead link.
   const stored = await db.rpc('signer_store_otp', { p_outbox_id: row.id, p_otp_hash: `\\x${hash.toString('hex')}` });

@@ -60,6 +60,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
   const [confirming, setConfirming] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
+  /** On a phone, the typed field being filled in through the large entry box at the bottom of the screen. */
+  const [editing, setEditing] = useState<string | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const canvases = useRef<Array<HTMLCanvasElement | null>>([]);
   const pdfRef = useRef<PdfDoc | null>(null);
@@ -156,12 +158,33 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
     } else setSaveError(res.message);
   };
 
-  const goNext = () => {
-    const next = remaining[0];
+  const goNext = (skip?: string) => {
+    const next = remaining.find((f) => f.id !== skip);
     if (!next) return;
     const el = targets.current[next.id];
+    // on a phone a typed field is filled in through the large entry box
+    if (isTyped(next.type) && window.innerWidth < 640) {
+      el?.scrollIntoView({ block: 'center' });
+      setEditing(next.id);
+      return;
+    }
     el?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     el?.focus({ preventScroll: true });
+  };
+
+  const editingField = editing ? (fields.find((x) => x.id === editing) ?? null) : null;
+  const finishEditing = async (andNext: boolean) => {
+    if (!editingField) return;
+    await saveValue(editingField);
+    setEditing(null);
+    if (andNext) goNext(editingField.id);
+  };
+
+  /** Keyboard and screen-reader users continue where they were: on the field they just signed. */
+  const refocusAfterDialog = (kind: 'signature' | 'initials') => {
+    const field = fields.find((f) => f.type === kind);
+    const el = field ? targets.current[field.id] : null;
+    window.setTimeout(() => el?.focus({ preventScroll: true }), 0);
   };
 
   const openConfirm = () => {
@@ -214,7 +237,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
               </p>
               <DeclineControl variant="quiet" className="px-2" />
               {remaining.length > 0 ? (
-                <Button type="button" onClick={goNext}>
+                <Button type="button" onClick={() => goNext()}>
                   {doneCount === 0 ? 'Start' : 'Next'}
                 </Button>
               ) : (
@@ -291,6 +314,13 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         maxLength={500}
                         onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
                         onBlur={() => void saveValue(f)}
+                        // On a narrow screen the field on the page is too small to read or tap: use the large box instead.
+                        onFocus={() => {
+                          if (window.innerWidth < 640) setEditing(f.id);
+                        }}
+                        onClick={() => {
+                          if (window.innerWidth < 640) setEditing(f.id);
+                        }}
                         style={{ ...box, color: '#141414', backgroundColor: (values[f.id] ?? '').trim() ? '#ffffff' : '#fff3bf', fontSize }}
                         className="absolute rounded-sm border-2 border-[#141414] px-1 placeholder:text-[#5a5a5a] focus-visible:outline-4"
                       />
@@ -312,14 +342,54 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
         </div>
       </div>
 
+      {editingField
+        ? (() => {
+            const f = editingField;
+            const done = (andNext: boolean) => finishEditing(andNext);
+            return (
+              <div className="fixed inset-x-0 bottom-0 z-30 border-t border-hairline bg-surface px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-soft" role="group" aria-labelledby="phone-entry-label">
+                <label id="phone-entry-label" htmlFor="phone-entry" className="text-sm font-medium text-ink">
+                  {FIELD_LABEL[f.type]}
+                  {f.required ? ' (required)' : ' (optional)'}
+                </label>
+                <input
+                  id="phone-entry"
+                  autoFocus
+                  value={values[f.id] ?? ''}
+                  maxLength={500}
+                  onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void done(true);
+                    if (e.key === 'Escape') void done(false);
+                  }}
+                  enterKeyHint="next"
+                  className="mt-1.5 min-h-12 w-full rounded-sm border border-control-border bg-surface px-3 text-base text-ink"
+                />
+                <div className="mt-2 flex justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={() => void done(false)}>
+                    Done
+                  </Button>
+                  <Button type="button" onClick={() => void done(true)}>
+                    Next
+                  </Button>
+                </div>
+              </div>
+            );
+          })()
+        : null}
+
       {dialogKind ? (
         <SignatureDialog
           kind={dialogKind}
           signerName={signer.name}
-          onClose={() => setDialogKind(null)}
+          onClose={() => {
+            setDialogKind(null);
+            refocusAfterDialog(dialogKind);
+          }}
           onAdopted={(url) => {
             setImages((m) => ({ ...m, [dialogKind]: url }));
             setDialogKind(null);
+            refocusAfterDialog(dialogKind);
           }}
         />
       ) : null}

@@ -99,7 +99,7 @@ async function makeDocument(title: string, people: { name: string; email: string
 beforeAll(async () => {
   if (!SUPABASE_URL || !SECRET || !TOKEN_KEY) throw new Error('Settings are missing. Run "npm run setup:env" (or double-click Enter-Supabase-Key.cmd).');
   const alive = await fetch(`${APP}/login`).then((r) => r.ok).catch(() => false);
-  if (!alive) throw new Error(`The app is not running at ${APP}. Start it first (npm run dev, or double-click Start-EasySign.cmd), then run this again.`);
+  if (!alive) throw new Error(`The app is not running at ${APP}. Start it first (npm run dev, or double-click Start-YouNMeSign.cmd), then run this again.`);
   db = createClient(SUPABASE_URL, SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
   // These tests make many requests from one address on purpose; start from a clean per-address counter so
   // that running them several times in a row does not trip the app's own request limiter (development database only).
@@ -236,7 +236,7 @@ describe('AT2.7 identity checks, through the running app', () => {
     expect((await gate(session, { action: 'request_code' })).status).toBe(429); // not twice within a minute
 
     const row = (await db.from('notification_outbox').select('id, payload, priority, status').eq('recipient_id', docA.mail.id).eq('kind', 'otp').single()).data!;
-    expect(row.priority).toBe('P0_AUTH');
+    expect(row.priority).toBe('P0_REQUEST'); // since migration 19 (D-63): counts against the sender's own limits
     expect(row.payload).toEqual({});
 
     // Either this test plays the worker for that one email, or the running worker already took it.

@@ -22,7 +22,7 @@ export const VARS = [
   ['APP_URL', 'Base URL of the app', 'plain', 'http://localhost:3000'],
   ['NOTIFY_MODE', 'Email mode: log | sandbox | live', 'plain', 'log'],
   ['RESEND_API_KEY', 'Resend API key (starts re_; sending access only)', 'secret', ''],
-  ['MAIL_FROM', 'Sender shown on emails, e.g. EasySign <notify@easysign.work.gd>', 'plain', 'EasySign <notify@easysign.work.gd>'],
+  ['MAIL_FROM', 'Sender shown on emails, e.g. YouNMeSign <notify@younmesign.com>', 'plain', 'YouNMeSign <notify@younmesign.com>'],
   ['SANDBOX_RECIPIENTS', 'Sandbox mode only: the ONLY addresses that may receive email (comma-separated)', 'plain', ''],
   ['SIGNER_TOKEN_KEY', 'Key that derives signer links', 'generated', ''],
   ['SESSION_COOKIE_KEY', 'Key that signs signer session cookies', 'generated', ''],
@@ -113,7 +113,7 @@ async function main() {
   const askNothing = args.includes('--defaults');
   const next = { ...current };
 
-  console.log('EasySign environment setup.\n');
+  console.log('YouNMeSign environment setup.\n');
   for (const [name, desc, kind, def] of VARS) {
     const has = Boolean(current[name]);
     if (kind === 'generated') {
@@ -145,7 +145,7 @@ async function main() {
   }
 
   const body =
-    '# EasySign local environment. NEVER commit this file. Managed by: npm run setup:env\n' +
+    '# YouNMeSign local environment. NEVER commit this file. Managed by: npm run setup:env\n' +
     VARS.map(([name]) => `${name}=${next[name] ?? ''}`).join('\n') +
     '\n';
   writeFileSync(file, body, { mode: 0o600 });

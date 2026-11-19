@@ -73,7 +73,7 @@ describe('daily summary email', () => {
 
   it('lists the notices, escaped, with a count in the subject', () => {
     const mail = digestTemplate({ name: 'Sam <b>', lines, more: 0, openUrl: 'http://localhost:3000/app/notifications' });
-    expect(mail.subject).toBe('EasySign: 2 updates on your documents');
+    expect(mail.subject).toBe('YouNMeSign: 2 updates on your documents');
     expect(mail.html).toContain('Rita signed &quot;Lease&quot;.');
     expect(mail.html).not.toContain('<img src=x');
     expect(mail.html).toContain('&lt;img src=x onerror=alert(1)&gt; approved &quot;A &amp; B&quot;.');
@@ -85,8 +85,8 @@ describe('daily summary email', () => {
 
   it('says so when there are more than fit, and uses the singular for one', () => {
     const many = digestTemplate({ name: 'Sam', lines, more: 5, openUrl: 'http://x.test/app/notifications' });
-    expect(many.subject).toBe('EasySign: 7 updates on your documents');
+    expect(many.subject).toBe('YouNMeSign: 7 updates on your documents');
     expect(many.text).toContain('And 5 more.');
-    expect(digestTemplate({ name: 'Sam', lines: ['One.'], more: 0, openUrl: 'http://x.test' }).subject).toBe('EasySign: 1 update on your documents');
+    expect(digestTemplate({ name: 'Sam', lines: ['One.'], more: 0, openUrl: 'http://x.test' }).subject).toBe('YouNMeSign: 1 update on your documents');
   });
 });

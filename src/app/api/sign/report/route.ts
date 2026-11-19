@@ -14,7 +14,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 const body = z.object({ reason: z.string().trim().min(3, 'Say in a few words what is wrong.').max(2000, 'Keep it under 2000 characters.'), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional() });
 
 export async function POST(request: NextRequest) {
-  if (!isSameOrigin(request)) return json(403, { error: 'This request did not come from EasySign.' });
+  if (!isSameOrigin(request)) return json(403, { error: 'This request did not come from YouNMeSign.' });
   if (!(await allow({ bucket: 'sign_report_ip', limit: 10, windowSeconds: 3600 }, await clientIp()))) return json(429, { error: TOO_MANY });
   const parsed = body.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json(400, { error: parsed.error.issues[0]?.message ?? 'That report could not be read. Try again.' });
