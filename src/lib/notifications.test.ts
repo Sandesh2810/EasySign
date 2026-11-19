@@ -21,6 +21,7 @@ describe('in-app notices', () => {
       'sealing_failed',
       'email_failed',
       'email_deferred',
+      'signer_locked',
       'account_approved',
       'account_approval_removed',
     ];
@@ -36,6 +37,17 @@ describe('in-app notices', () => {
     expect(v.text).toContain('after the daily reset');
     expect(v.text).toContain('copy the link');
     expect(v.tone).toBe('attention');
+  });
+
+  it('a locked link tells the sender whether they have to do something', () => {
+    const timed = describeNotification('signer_locked', { envelope_id: ID, title: 'NDA', by: 'Rita', needs_sender: false });
+    const stuck = describeNotification('signer_locked', { envelope_id: ID, title: 'NDA', by: 'Rita', needs_sender: true });
+    expect(timed.text).toContain('Rita entered the wrong code too many times for "NDA"');
+    expect(timed.text).toContain('works again');
+    expect(stuck.text).toContain('until you unlock it');
+    expect(stuck.path).toBe(`/app/envelopes/${ID}`);
+    // only a real "true" from the database counts
+    expect(describeNotification('signer_locked', { title: 'NDA', by: 'Rita', needs_sender: 'true' }).text).toContain('works again');
   });
 
   it('never builds a link from something that is not a document id', () => {

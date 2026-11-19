@@ -58,6 +58,15 @@ export function describeNotification(kind: string, payload: unknown): NoticeView
         path,
         tone: 'attention',
       };
+    case 'signer_locked':
+      return {
+        text:
+          p.needs_sender === true
+            ? `${by} entered the wrong code too many times for ${title}. Their link is locked until you unlock it on the document page. Check with them first that it really was them.`
+            : `${by} entered the wrong code too many times for ${title}. Their link is locked for a short while and then works again.`,
+        path,
+        tone: 'attention',
+      };
     case 'account_approved':
       return { text: 'Your account was approved. You can now send documents to other people.', path: null, tone: 'good' };
     case 'account_approval_removed':

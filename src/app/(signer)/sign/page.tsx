@@ -2,11 +2,14 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { APPROVE_TEXT, CONSENT_PARAGRAPHS, INTENT_TEXT } from '@/config/legal';
 import type { FieldType } from '@/lib/fields';
+import { maskEmail } from '@/lib/access-code';
+import { lockedMessage } from '@/lib/signing/gate-text';
 import { loadSignerContext } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ConsentForm } from './consent-form';
 import { DeclineControl } from './decline';
 import { Finalising } from './finalising';
+import { AccessCodeForm, EmailCodeForm } from './gate-form';
 import { SigningRoom, type RoomField } from './signing-room';
 
 export const metadata: Metadata = { title: 'Sign document' };
@@ -30,12 +33,34 @@ function Message({ title, body, children }: { title: string; body: string; child
 }
 
 async function Sign() {
-  const ctx = await loadSignerContext();
+  // allowUnverified: this page also shows the code screen. Everything below the gate check runs only
+  // for a session that has passed it (or needs none).
+  const ctx = await loadSignerContext({ allowUnverified: true });
   if (!ctx) {
     return <Message title="Your signing session has ended" body="For your security a signing session lasts two hours. Open the link from your email again to continue where you left off." />;
   }
   const { envelope, recipient } = ctx;
   const admin = supabaseAdmin();
+  if (ctx.gate) {
+    // Nothing about the document is shown here beyond the sender's check itself: no title, no pages.
+    const { data } = await admin.rpc('signer_auth_state', { p_token_id: ctx.tokenId });
+    const state = (Array.isArray(data) ? data[0] : null) as { locked_until: string | null; otp_status: 'none' | 'sending' | 'sent' | 'delayed' | 'failed' } | null;
+    const lockedText = state?.locked_until ? lockedMessage(state.locked_until) : null;
+    return (
+      <div className="mx-auto max-w-xl px-4 py-12">
+        <h1 className="text-2xl font-medium text-ink">One more step before your document opens</h1>
+        <p className="mt-3 text-base text-ink-body">
+          Hello {recipient.name}. The sender asked for an extra check that it is really you. This protects you if someone else gets hold of your link.
+        </p>
+        {ctx.gate === 'access_code' ? (
+          <AccessCodeForm lockedText={lockedText} />
+        ) : (
+          <EmailCodeForm maskedEmail={maskEmail(recipient.email)} otpStatus={state?.otp_status ?? 'none'} lockedText={lockedText} />
+        )}
+        <p className="mt-8 text-sm text-ink-muted">You get five tries. After that the link is locked for a while so that nobody can guess the code.</p>
+      </div>
+    );
+  }
   const { data: profile } = await admin.from('profiles').select('display_name').eq('id', envelope.sender_id).maybeSingle();
   const senderName = recipient.is_sender ? 'you' : (profile?.display_name as string | undefined) || 'the sender';
 

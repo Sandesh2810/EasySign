@@ -4,11 +4,12 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { z } from 'zod';
 import { requireUser } from '@/lib/auth/session';
+import { loadLinkLocks, type LinkLock } from '@/lib/signing/locks';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { Button, Notice } from '@/components/ui';
 import { StatusChip } from '@/components/status-chip';
 import type { FieldType } from '@/lib/fields';
-import { progressLabel, ROLE_LABEL } from '@/lib/recipient-labels';
+import { progressLabel, ROLE_LABEL, type IdentityCheck } from '@/lib/recipient-labels';
 import type { RecipientStatus, Role, RoutingMode } from '@/lib/routing';
 import { deleteDraftAction } from '../actions';
 import { FieldEditor, type EditorField } from './field-editor';
@@ -35,6 +36,7 @@ interface RecipientRow {
   is_sender: boolean;
   routing_order: number;
   decline_reason: string | null;
+  auth_method: IdentityCheck;
 }
 
 async function Envelope({ params }: { params: Promise<{ id: string }> }) {
@@ -47,7 +49,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
   const [{ data: env }, { data: docs }, { data: recipientRows }, { data: fields }, { data: profile }] = await Promise.all([
     supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason, expires_at, expired_at, remind_after_days, remind_every_days, remind_max').eq('id', id.data).maybeSingle(),
     supabase.from('envelope_documents').select('id, filename, page_count, size_bytes, sha256').eq('envelope_id', id.data).order('position'),
-    supabase.from('recipients').select('id, name, email, role, status, is_sender, routing_order, decline_reason').eq('envelope_id', id.data).order('routing_order').order('created_at'),
+    supabase.from('recipients').select('id, name, email, role, status, is_sender, routing_order, decline_reason, auth_method').eq('envelope_id', id.data).order('routing_order').order('created_at'),
     supabase.from('fields').select('id, recipient_id, type, page, x, y, w, h, required').eq('envelope_id', id.data),
     supabase.from('profiles').select('display_name').eq('id', user.id).maybeSingle(),
   ]);
@@ -72,7 +74,10 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
   }));
   const editable: EditableRecipient[] = recipients
     .filter((r) => r.role !== 'in_person')
-    .map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role as EditableRecipient['role'], order: r.routing_order }));
+    .map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role as EditableRecipient['role'], order: r.routing_order, check: r.auth_method, codeSet: r.auth_method === 'access_code' }));
+  // Whose link is locked after too many wrong codes. This table is server-only; the document itself was
+  // already read through the user's own session above, so only a member of the workspace gets this far.
+  const locked: Map<string, LinkLock> = isOpen && recipients.some((r) => r.auth_method !== 'link') ? await loadLinkLocks(env.id as string) : new Map();
 
   return (
     <div className="flex flex-col gap-6">
@@ -109,7 +114,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
         <h2 className="mb-3 text-base font-medium text-ink">{isDraft ? '1. Who is involved?' : 'People'}</h2>
         {isDraft ? (
           <RecipientsEditor
-            key={`${env.routing_mode}:${recipients.map((r) => `${r.id}${r.role}${r.routing_order}`).join(',')}`}
+            key={`${env.routing_mode}:${recipients.map((r) => `${r.id}${r.role}${r.routing_order}${r.auth_method}`).join(',')}`}
             envelopeId={env.id}
             initial={editable}
             initialMode={env.routing_mode as RoutingMode}
@@ -126,14 +131,21 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
                   <span className="block truncate text-ink">{r.name}</span>
                   <span className="block truncate text-ink-muted">{r.email}</span>
                 </span>
-                <span className="text-ink-body">{ROLE_LABEL[r.role]}</span>
-                <span className="font-medium text-ink">{progressLabel(r.role, r.status)}</span>
+                <span className="text-ink-body">
+                  {ROLE_LABEL[r.role]}
+                  {r.auth_method !== 'link' ? <span className="block text-ink-muted">Extra check: {r.auth_method === 'access_code' ? 'access code' : 'code by email'}</span> : null}
+                </span>
+                <span className="font-medium text-ink">
+                  {progressLabel(r.role, r.status)}
+                  {locked.has(r.id) ? <span className="block font-normal text-ink-body">Locked after too many wrong codes{locked.get(r.id) === 'timed' ? ' (opens again by itself shortly)' : ''}</span> : null}
+                </span>
                 {isOpen ? (
                   <PersonActions
                     envelopeId={env.id}
                     person={{ id: r.id, name: r.name, email: r.email }}
                     canResend={env.delivery === 'email' && r.role !== 'cc' && !r.is_sender && ['sent', 'viewed', 'consented'].includes(r.status)}
                     canCorrect={['created', 'sent', 'viewed', 'consented'].includes(r.status)}
+                    locked={locked.has(r.id)}
                   />
                 ) : null}
               </li>

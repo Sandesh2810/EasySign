@@ -34,9 +34,14 @@ export async function readSignerClaims(): Promise<SessionClaims | null> {
   return check.ok ? check.claims : null;
 }
 
+/** The extra identity check this session still has to pass before the link opens anything (D-59). */
+export type SignerGate = 'access_code' | 'email_otp';
+
 export interface SignerContext {
   tokenId: string;
   expiresAt: string;
+  /** null once the check is passed, or when the sender asked for none. */
+  gate: SignerGate | null;
   recipient: { id: string; name: string; email: string; role: string; status: string; is_sender: boolean; completed_at: string | null };
   envelope: {
     id: string;
@@ -52,8 +57,13 @@ export interface SignerContext {
   };
 }
 
-/** The signer behind this request, or null when there is no live link. Never trusts the cookie alone. */
-export async function loadSignerContext(): Promise<SignerContext | null> {
+/**
+ * The signer behind this request, or null when there is no live link. Never trusts the cookie alone.
+ * A session that has not yet passed the sender's extra check (access code or emailed code) also gets
+ * null, so every page, action and download is closed by default. Only the code screen and its own
+ * actions pass allowUnverified, and they must look at ctx.gate.
+ */
+export async function loadSignerContext(opts: { allowUnverified?: boolean } = {}): Promise<SignerContext | null> {
   const claims = await readSignerClaims();
   if (!claims) return null;
   const admin = supabaseAdmin();
@@ -61,7 +71,7 @@ export async function loadSignerContext(): Promise<SignerContext | null> {
   if (!tok || tok.revoked_at || new Date(tok.expires_at as string).getTime() <= Date.now()) return null;
   if (tok.recipient_id !== claims.recipientId || tok.envelope_id !== claims.envelopeId) return null;
   const [{ data: recipient }, { data: envelope }] = await Promise.all([
-    admin.from('recipients').select('id, name, email, role, status, is_sender, completed_at').eq('id', tok.recipient_id).maybeSingle(),
+    admin.from('recipients').select('id, name, email, role, status, is_sender, completed_at, auth_method').eq('id', tok.recipient_id).maybeSingle(),
     admin
       .from('envelopes')
       .select('id, org_id, title, status, public_code, sender_id, final_sha256, sealed_storage_backend, sealed_storage_path, certificate_storage_path')
@@ -69,7 +79,11 @@ export async function loadSignerContext(): Promise<SignerContext | null> {
       .maybeSingle(),
   ]);
   if (!recipient || !envelope) return null;
-  return { tokenId: tok.id as string, expiresAt: tok.expires_at as string, recipient: recipient as SignerContext['recipient'], envelope: envelope as SignerContext['envelope'] };
+  // The sender signing their own document is already signed in, so no extra check applies to them.
+  const method = recipient.auth_method as string;
+  const gate: SignerGate | null = recipient.is_sender || claims.level === 'verified' ? null : method === 'access_code' || method === 'email_otp' ? method : null;
+  if (gate && !opts.allowUnverified) return null;
+  return { tokenId: tok.id as string, expiresAt: tok.expires_at as string, gate, recipient: recipient as SignerContext['recipient'], envelope: envelope as SignerContext['envelope'] };
 }
 
 /** IP (null when it is not a real address, e.g. local development) and browser string for the audit trail. */

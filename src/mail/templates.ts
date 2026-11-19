@@ -99,6 +99,37 @@ export function signatureRequestTemplate(v: { signerName: string; senderName: st
 }
 
 /** Tells the sender that a document reached its expiry date before everyone finished. */
+/** The six-digit code a signer asked for on the code screen. No link: the code is typed into the page they already have open. */
+export function otpTemplate(v: { name: string; title: string; code: string; minutes: number }): RenderedEmail {
+  const spaced = `${v.code.slice(0, 3)} ${v.code.slice(3)}`;
+  const subject = oneLine(`Your code to open "${v.title}"`);
+  return {
+    subject,
+    html: layout({
+      preheader: `Use this code within ${v.minutes} minutes.`,
+      heading: 'Your code',
+      paragraphs: [
+        `Hello ${esc(v.name)},`,
+        `You asked for a code to open <strong>${esc(v.title)}</strong>. Type it into the page where you asked for it:`,
+        `<span style="display:inline-block;font-size:32px;line-height:40px;letter-spacing:0.12em;font-weight:600;color:#1a1818;">${esc(spaced)}</span>`,
+        `The code works once and for ${v.minutes} minutes.`,
+      ],
+      footnote: 'If you did not ask for this code, you can ignore this email: nobody can open the document without it. Never give this code to anyone, including someone who says they are from ' + esc(PRODUCT_NAME) + '.',
+    }),
+    text: [
+      `Hello ${v.name},`,
+      '',
+      `You asked for a code to open "${v.title}". Type it into the page where you asked for it:`,
+      '',
+      `    ${spaced}`,
+      '',
+      `The code works once and for ${v.minutes} minutes.`,
+      '',
+      `If you did not ask for this code, you can ignore this email: nobody can open the document without it. Never give this code to anyone, including someone who says they are from ${PRODUCT_NAME}.`,
+    ].join('\n'),
+  };
+}
+
 /** The opt-in daily summary: one email listing what happened on the person's documents. */
 export function digestTemplate(v: { name: string; lines: string[]; more: number; openUrl: string }): RenderedEmail {
   const n = v.lines.length + v.more;

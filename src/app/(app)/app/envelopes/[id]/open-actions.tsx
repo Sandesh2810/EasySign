@@ -3,13 +3,14 @@
 // person's name or email, or cancel the document for everyone.
 import { useActionState, useState, useTransition } from 'react';
 import { Button, Notice, TextField } from '@/components/ui';
-import { correctRecipientAction, resendRequestAction, voidEnvelopeAction, type ActionResult } from '../actions';
+import { correctRecipientAction, resendRequestAction, unlockRecipientAction, voidEnvelopeAction, type ActionResult } from '../actions';
 
 export function PersonActions({
   envelopeId,
   person,
   canResend,
   canCorrect,
+  locked = false,
 }: {
   envelopeId: string;
   person: { id: string; name: string; email: string };
@@ -17,6 +18,8 @@ export function PersonActions({
   canResend: boolean;
   /** not finished yet */
   canCorrect: boolean;
+  /** too many wrong codes were typed through this person's link */
+  locked?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [resent, setResent] = useState<ActionResult | null>(null);
@@ -26,7 +29,7 @@ export function PersonActions({
     if (res.ok) setEditing(false);
     return res;
   }, null);
-  if (!canResend && !canCorrect) return null;
+  if (!canResend && !canCorrect && !locked) return null;
 
   return (
     <div className="flex flex-col gap-2 sm:col-span-4">
@@ -41,6 +44,18 @@ export function PersonActions({
             onClick={() => start(async () => setResent(await resendRequestAction(envelopeId, person.id).catch(() => ({ ok: false as const, message: 'Could not reach the server.' }))))}
           >
             {pending ? 'Sending…' : 'Send again'}
+          </Button>
+        ) : null}
+        {locked ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-10 px-4 text-sm"
+            disabled={pending}
+            aria-label={`Unlock the link of ${person.name}`}
+            onClick={() => start(async () => setResent(await unlockRecipientAction(envelopeId, person.id).catch(() => ({ ok: false as const, message: 'Could not reach the server.' }))))}
+          >
+            Unlock their link
           </Button>
         ) : null}
         {canCorrect && !editing ? (

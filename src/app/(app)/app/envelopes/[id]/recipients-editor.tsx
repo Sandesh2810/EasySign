@@ -2,7 +2,7 @@
 // Step 1 on the document page: who is involved, what each person does, and in which order (D-52).
 import { useMemo, useState, useTransition } from 'react';
 import { Button, Notice } from '@/components/ui';
-import { ROLE_LABEL } from '@/lib/recipient-labels';
+import { CHECK_LABEL, ROLE_LABEL, type IdentityCheck } from '@/lib/recipient-labels';
 import { assignOrders, MAX_RECIPIENTS, mustAct, validateRouting, type Role, type RoutingMode } from '@/lib/routing';
 import { saveRecipientsAction } from '../actions';
 
@@ -13,10 +13,17 @@ export interface EditableRecipient {
   email: string;
   role: EditableRole;
   order: number;
+  /** extra identity check before this person's link opens anything */
+  check?: IdentityCheck;
+  /** an access code is already stored for this person (it cannot be shown again) */
+  codeSet?: boolean;
 }
 interface Row extends EditableRecipient {
   key: string;
+  /** a newly typed access code; sent once on save, then forgotten by the page */
+  code: string;
 }
+const CHECKS: IdentityCheck[] = ['link', 'access_code', 'email_otp'];
 
 const ROLE_CHOICES: EditableRole[] = ['signer', 'approver', 'viewer', 'cc'];
 const MODES: { id: RoutingMode; label: string; help: string }[] = [
@@ -51,7 +58,7 @@ function describe(rows: Row[], orders: number[]): string {
 }
 
 export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { envelopeId: string; initial: EditableRecipient[]; initialMode: RoutingMode; me: { name: string; email: string } }) {
-  const [rows, setRows] = useState<Row[]>(() => (initial.length ? initial : [{ id: null, name: '', email: '', role: 'signer' as const, order: 1 }]).map((r) => ({ ...r, key: r.id ?? newKey() })));
+  const [rows, setRows] = useState<Row[]>(() => (initial.length ? initial : [{ id: null, name: '', email: '', role: 'signer' as const, order: 1 }]).map((r) => ({ ...r, key: r.id ?? newKey(), code: '' })));
   const [mode, setMode] = useState<RoutingMode>(initialMode);
   const [dirty, setDirty] = useState(initial.length === 0);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -60,6 +67,8 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
   const orders = useMemo(() => (mode === 'mixed' ? rows.map((r) => r.order) : assignOrders(mode, rows.map((r) => r.role as Role))), [mode, rows]);
   const summary = useMemo(() => describe(rows, orders), [rows, orders]);
   const meListed = rows.some((r) => r.email.trim().toLowerCase() === me.email.toLowerCase());
+  // no extra check for someone who only gets a copy, or for yourself
+  const canHaveCheck = (r: Row) => r.role !== 'cc' && r.email.trim().toLowerCase() !== me.email.toLowerCase();
 
   const change = (next: Row[]) => {
     setRows(next);
@@ -74,7 +83,7 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
     [next[index], next[to]] = [next[to], next[index]];
     change(next);
   };
-  const add = (r: Partial<Row> = {}) => change([...rows, { key: newKey(), id: null, name: '', email: '', role: 'signer', order: Math.max(1, ...orders) + (mode === 'parallel' ? 0 : 1), ...r }]);
+  const add = (r: Partial<Row> = {}) => change([...rows, { key: newKey(), id: null, name: '', email: '', role: 'signer', order: Math.max(1, ...orders) + (mode === 'parallel' ? 0 : 1), check: 'link', code: '', ...r }]);
 
   const save = () =>
     start(async () => {
@@ -84,7 +93,12 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
         setResult({ ok: false, message: check.message });
         return;
       }
-      const res = await saveRecipientsAction(envelopeId, { mode, recipients: filled.map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role, order: r.order })) }).catch(() => ({ ok: false as const, message: 'Could not reach the server. Nothing was saved.' }));
+      const noCode = filled.find((r) => canHaveCheck(r) && r.check === 'access_code' && !r.codeSet && !r.code.trim());
+      if (noCode) {
+        setResult({ ok: false, message: `Type an access code for ${noCode.name.trim() || 'this person'}, or choose a different check.` });
+        return;
+      }
+      const res = await saveRecipientsAction(envelopeId, { mode, recipients: filled.map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role, order: r.order, check: canHaveCheck(r) ? (r.check ?? 'link') : 'link', code: r.check === 'access_code' ? r.code : '' })) }).catch(() => ({ ok: false as const, message: 'Could not reach the server. Nothing was saved.' }));
       setResult({ ok: res.ok, message: res.message ?? 'Saved.' });
       if (res.ok) setDirty(false);
     });
@@ -168,6 +182,51 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
                 </button>
               </div>
             </div>
+            {canHaveCheck(r) ? (
+              <div className="mt-3 grid gap-3 border-t border-hairline pt-3 sm:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] sm:items-start">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor={`check-${r.key}`} className="text-sm font-medium text-ink">
+                    Extra check before it opens
+                  </label>
+                  <select id={`check-${r.key}`} value={r.check ?? 'link'} onChange={(e) => patch(r.key, { check: e.target.value as IdentityCheck, code: '' })} className={INPUT}>
+                    {CHECKS.map((c) => (
+                      <option key={c} value={c}>
+                        {CHECK_LABEL[c]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {r.check === 'access_code' ? (
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor={`code-${r.key}`} className="text-sm font-medium text-ink">
+                      Access code
+                    </label>
+                    <input
+                      id={`code-${r.key}`}
+                      type="text"
+                      value={r.code}
+                      maxLength={64}
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      placeholder={r.codeSet ? 'A code is set. Type a new one only to change it' : 'At least 6 characters'}
+                      onChange={(e) => patch(r.key, { code: e.target.value })}
+                      aria-describedby={`code-hint-${r.key}`}
+                      className={INPUT}
+                    />
+                    <p id={`code-hint-${r.key}`} className="text-sm text-ink-muted">
+                      Tell {r.name.trim() || 'this person'} the code yourself, for example by phone. It is never emailed, and it cannot be shown again after you save, so note it down. It cannot be changed
+                      once the document is sent.
+                    </p>
+                  </div>
+                ) : r.check === 'email_otp' ? (
+                  <p className="text-sm text-ink-muted sm:pt-7">
+                    When {r.name.trim() || 'this person'} opens the link, they ask for a 6-digit code that is sent to this email address. Useful when you share the link yourself. Each code uses one email
+                    from the daily allowance.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </li>
         ))}
       </ol>

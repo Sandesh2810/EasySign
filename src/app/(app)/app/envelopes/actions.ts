@@ -4,6 +4,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { checkAccessCode, hashAccessCode } from '@/lib/access-code';
 import { fieldsSchema } from '@/lib/fields';
 import { friendlyDbError } from '@/lib/request-guard';
 import { assignOrders, MAX_RECIPIENTS, validateRouting } from '@/lib/routing';
@@ -25,6 +26,9 @@ const recipientsSchema = z.object({
         email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address for every person.')),
         role: z.enum(['signer', 'approver', 'viewer', 'cc']),
         order: z.number().int().min(1).max(99),
+        // the extra identity check; the typed code is hashed below and never stored or logged as typed
+        check: z.enum(['link', 'access_code', 'email_otp']).default('link'),
+        code: z.string().max(200).default(''),
       }),
     )
     .min(1, 'Add at least one person who signs.')
@@ -55,10 +59,22 @@ export async function saveRecipientsAction(envelopeId: string, input: unknown): 
   }
 
   const me = (user.email ?? '').toLowerCase();
+  // An extra check makes no sense for someone who only gets a copy, or for the sender signing their own document.
+  const wanted = recipients.map((r) => (r.role === 'cc' || r.email === me ? ('link' as const) : r.check));
+  const codes: (string | null)[] = [];
+  for (const [i, r] of recipients.entries()) {
+    if (wanted[i] !== 'access_code' || r.code.trim() === '') {
+      codes.push(null);
+      continue;
+    }
+    const code = checkAccessCode(r.code);
+    if (!code.ok) return { ok: false, message: `${r.name}: ${code.message}` };
+    codes.push(code.value);
+  }
   const admin = supabaseAdmin();
   const routing = await admin.rpc('set_routing_mode', { p_actor: user.id, p_envelope_id: id.data, p_mode: mode });
   if (routing.error) return { ok: false, message: friendlyDbError(routing.error.message).message };
-  const { error } = await admin.rpc('save_recipients', {
+  const { data: saved, error } = await admin.rpc('save_recipients', {
     p_actor: user.id,
     p_envelope_id: id.data,
     p_recipients: recipients.map((r, i) => ({ id: r.id, name: r.name, email: r.email, role: r.role, routing_order: orders[i], is_sender: r.email === me })),
@@ -66,6 +82,25 @@ export async function saveRecipientsAction(envelopeId: string, input: unknown): 
   if (error) {
     const friendly = friendlyDbError(error.message);
     return { ok: false, message: /recipients_unique_email/.test(error.message) ? 'The same email address is listed twice with the same role.' : friendly.message };
+  }
+  // The identity checks, one person at a time. Only what changed is written; a code is hashed here (slowly, on
+  // purpose) and only the hash goes to the database.
+  const rows = (saved ?? []) as { id: string; email: string; role: string; auth_method: string }[];
+  for (const [i, r] of recipients.entries()) {
+    const row = rows.find((x) => x.email === r.email && x.role === r.role);
+    if (!row) continue;
+    if (row.auth_method === wanted[i] && codes[i] === null) continue;
+    const auth = await admin.rpc('set_recipient_auth', {
+      p_actor: user.id,
+      p_envelope_id: id.data,
+      p_recipient_id: row.id,
+      p_method: wanted[i],
+      p_access_code_hash: codes[i] === null ? null : await hashAccessCode(codes[i]!),
+    });
+    if (auth.error) {
+      revalidatePath(`/app/envelopes/${id.data}`);
+      return { ok: false, message: `The people were saved, but the extra check for ${r.name} was not: ${friendlyDbError(auth.error.message).message}` };
+    }
   }
   revalidatePath(`/app/envelopes/${id.data}`);
   return { ok: true, message: 'Saved.' };
@@ -165,6 +200,17 @@ export async function resendRequestAction(envelopeId: string, recipientId: strin
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
   revalidatePath(`/app/envelopes/${ids.data.e}`);
   return { ok: true, message: 'Sent again.' };
+}
+
+/** Lifts a lock that too many wrong codes put on one person's link. Only a member of the workspace can. */
+export async function unlockRecipientAction(envelopeId: string, recipientId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const ids = z.object({ e: z.uuid(), r: z.uuid() }).safeParse({ e: envelopeId, r: recipientId });
+  if (!ids.success) return { ok: false, message: 'That request was not understood. Reload the page and try again.' };
+  const { data, error } = await supabaseAdmin().rpc('unlock_recipient_auth', { p_actor: user.id, p_envelope_id: ids.data.e, p_recipient_id: ids.data.r });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath(`/app/envelopes/${ids.data.e}`);
+  return { ok: true, message: data === true ? 'Unlocked. They get five new tries.' : 'Their link was not locked any more.' };
 }
 
 const correctionSchema = z.object({

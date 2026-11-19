@@ -17,6 +17,7 @@ declare
   e7 uuid;
   e8 uuid;
   e10 uuid;
+  e12 uuid;
   d_today text := to_char((now() at time zone 'UTC')::date, 'YYYY-MM-DD');
 begin
   -- ---------- setup as the migration role ----------
@@ -59,7 +60,7 @@ begin
   insert into public.envelope_documents (org_id, envelope_id, filename, storage_path, sha256, page_count, size_bytes, page_boxes)
     values (org_b /* deliberately wrong: the guard must overwrite it */, env_a, 'nda.pdf', org_a || '/' || env_a || '/doc1', repeat('ab', 32), 2, 1000, '[]')
     returning id into doc_a;
-  insert into public.recipients (org_id, envelope_id, name, email, access_code_hash) values (org_a, env_a, 'Sam Signer', 'sam@example.test', 'secret-hash')
+  insert into public.recipients (org_id, envelope_id, name, email, access_code_hash) values (org_a, env_a, 'Sam Signer', 'sam@example.test', 'scrypt$32768$8$3$' || repeat('S', 22) || '$' || repeat('H', 43))
     returning id into rcp_a;
   insert into public.fields (org_id, envelope_id, document_id, recipient_id, type, page, x, y, w, h)
     values (org_a, env_a, doc_a, rcp_a, 'signature', 1, 0.1, 0.1, 0.3, 0.05);
@@ -942,23 +943,23 @@ begin
     else res := res || 'FAIL T107 progress notices :: ' || cnt || E'\n'; end if;
 
     -- T108: daily digest, opt-in, at most one a day, only when there is something to report
-    cnt := public.queue_digests(now());                                  -- nobody has opted in
+    perform public.queue_digests(now());                                 -- neither test user has opted in
     perform public.set_digest_opt_in(a, true);
-    cnt := cnt + public.queue_digests(now());                            -- too soon: the first digest comes a day later
+    perform public.queue_digests(now());                                 -- too soon: the first digest comes a day later
     n := 0;
     begin perform public.queue_digests(now() + interval '25 hours'); n := n + 1; exception when invalid_parameter_value then null; end;  -- a future time needs the test flag
     begin perform public.set_digest_opt_in(gen_random_uuid(), true); n := n + 1; exception when insufficient_privilege then null; end;
     perform set_config('easysign.test_clock', 'on', true);
-    cnt := cnt + public.queue_digests(now() + interval '25 hours');       -- nothing happened since opting in
+    perform public.queue_digests(now() + interval '25 hours'); select count(*) into cnt from public.notification_outbox o where o.kind = 'digest' and o.to_user_id in (a, b);  -- nothing happened since opting in: still none for the test users
     insert into public.notifications (org_id, user_id, kind, payload, created_at)
       values (org_a, a, 'recipient_signed', jsonb_build_object('envelope_id', e11, 'title', 'Notice test', 'by', 'Later Person'), now() + interval '30 hours');
-    cnt2 := public.queue_digests(now() + interval '50 hours');
-    cnt2 := cnt2 + public.queue_digests(now() + interval '50 hours');     -- the same moment again
-    cnt2 := cnt2 + public.queue_digests(now() + interval '60 hours');     -- less than a day later
+    perform public.queue_digests(now() + interval '50 hours');
+    perform public.queue_digests(now() + interval '50 hours');            -- the same moment again
+    perform public.queue_digests(now() + interval '60 hours');            -- less than a day later
     perform public.set_digest_opt_in(a, false);
     insert into public.notifications (org_id, user_id, kind, payload, created_at)
       values (org_a, a, 'recipient_signed', jsonb_build_object('envelope_id', e11, 'title', 'Notice test', 'by', 'After Opt Out'), now() + interval '70 hours');
-    cnt2 := cnt2 + public.queue_digests(now() + interval '100 hours');    -- opted out
+    perform public.queue_digests(now() + interval '100 hours'); select count(*) into cnt2 from public.notification_outbox o where o.kind = 'digest' and o.to_user_id in (a, b);  -- opted out: exactly the one from before
     perform set_config('easysign.test_clock', '', true);
     if cnt = 0 and n = 0 and cnt2 = 1
        and (select count(*) from public.notification_outbox o where o.kind = 'digest' and o.to_user_id = a) = 1
@@ -994,6 +995,235 @@ begin
     if n = 0
     then res := res || E'PASS T110 the notification and digest functions are server-only; a signed-in user cannot switch the digest directly, nor create or delete notices\n';
     else res := res || 'FAIL T110 server-only :: ' || n || E'\n'; end if;
+
+    update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
+  end;
+
+  -- ---------- extra identity checks before a link opens anything (migrations 15 and 16: slice 7, AT2.7) ----------
+  -- Runs as the migration role: to move time forward the test edits the counters table directly, which the
+  -- server role may only read. That the server role can call the functions is checked in T118 and by the
+  -- route tests (tests/api/signer-gate.test.ts), which go through the running app with the server key.
+  declare
+    d12 uuid; g_code uuid; g_mail uuid; g_copy uuid; g_plain uuid; oid uuid; oid2 uuid; st text; cnt int; cnt2 int; ts timestamptz; i int;
+    t_code uuid := gen_random_uuid(); t_mail uuid := gen_random_uuid(); t_plain uuid := gen_random_uuid(); t_mail2 uuid := gen_random_uuid();
+    h_code text := repeat('f1', 32); h_mail text := repeat('f2', 32); h_plain text := repeat('f3', 32); h_mail2 text := repeat('f4', 32);
+    hash1 text := 'scrypt$32768$8$3$' || repeat('A', 22) || '$' || repeat('B', 43);
+    good bytea := decode(repeat('aa', 32), 'hex'); bad bytea := decode(repeat('bb', 32), 'hex');
+    r1 record; r2 record; au record;
+  begin
+    execute 'reset role';
+    update public.account_controls set approved = true, daily_recipient_cap = 50, daily_envelope_cap = 50 where user_id = a;
+    select e.id into e12 from public.create_envelope(a, org_a, 'Gate test', folder_a) e;
+    select d.id into d12 from public.add_envelope_document(a, e12, 'f.pdf', 'supabase', org_a || '/' || e12 || '/d1', repeat('b2', 32), 1, 900, '[]', 'pdf') d;
+    perform public.save_recipients(a, e12, '[{"name":"G Code","email":"g-code@example.test","role":"signer","routing_order":1},{"name":"G Mail","email":"g-mail@example.test","role":"signer","routing_order":1},{"name":"G Plain","email":"g-plain@example.test","role":"signer","routing_order":1},{"name":"G Copy","email":"g-copy@example.test","role":"cc","routing_order":1}]');
+    select x.id into g_code from public.recipients x where x.envelope_id = e12 and x.email = 'g-code@example.test';
+    select x.id into g_mail from public.recipients x where x.envelope_id = e12 and x.email = 'g-mail@example.test';
+    select x.id into g_plain from public.recipients x where x.envelope_id = e12 and x.email = 'g-plain@example.test';
+    select x.id into g_copy from public.recipients x where x.envelope_id = e12 and x.email = 'g-copy@example.test';
+    perform public.save_fields(a, e12, jsonb_build_array(
+      jsonb_build_object('document_id', d12, 'recipient_id', g_code, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.4, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d12, 'recipient_id', g_mail, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.5, 'w', 0.3, 'h', 0.07),
+      jsonb_build_object('document_id', d12, 'recipient_id', g_plain, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.6, 'w', 0.3, 'h', 0.07)));
+    perform public.set_routing_mode(a, e12, 'parallel');
+
+    -- T111: who may choose a check, and what is stored
+    n := 0;
+    begin perform public.set_recipient_auth(b, e12, g_code, 'access_code', hash1); n := n + 1; exception when insufficient_privilege then null; end;      -- not a member
+    begin perform public.set_recipient_auth(a, e12, g_code, 'access_code', null); n := n + 1; exception when invalid_parameter_value then null; end;       -- no code given
+    begin perform public.set_recipient_auth(a, e12, g_code, 'access_code', 'open sesame'); n := n + 1; exception when check_violation then null; end;       -- a readable code is refused by the table itself
+    begin perform public.set_recipient_auth(a, e12, g_copy, 'email_otp', null); n := n + 1; exception when invalid_parameter_value then null; end;         -- copy-only person
+    begin perform public.set_recipient_auth(a, e12, g_code, 'sms', null); n := n + 1; exception when invalid_parameter_value then null; end;
+    begin perform public.set_recipient_auth(a, e12, gen_random_uuid(), 'email_otp', null); n := n + 1; exception when insufficient_privilege then null; end;
+    perform public.set_recipient_auth(a, e12, g_code, 'access_code', hash1);
+    perform public.set_recipient_auth(a, e12, g_code, 'access_code', null);       -- saved again without retyping: the code stays
+    perform public.set_recipient_auth(a, e12, g_mail, 'email_otp', null);
+    perform public.set_recipient_auth(a, e12, g_plain, 'email_otp', null);
+    perform public.set_recipient_auth(a, e12, g_plain, 'link', null);
+    perform public.send_envelope(a, e12, jsonb_build_array(
+      jsonb_build_object('recipient_id', g_code, 'token_id', t_code, 'nonce', repeat('41', 16), 'token_sha256', h_code),
+      jsonb_build_object('recipient_id', g_mail, 'token_id', t_mail, 'nonce', repeat('42', 16), 'token_sha256', h_mail),
+      jsonb_build_object('recipient_id', g_plain, 'token_id', t_plain, 'nonce', repeat('43', 16), 'token_sha256', h_plain)), now() + interval '30 days', 'link');
+    begin perform public.set_recipient_auth(a, e12, g_code, 'link', null); n := n + 1; exception when insufficient_privilege then null; end;               -- not after sending
+    if n = 0
+       and (select string_agg(x.auth_method || ':' || (x.access_code_hash is not null)::text, ',' order by x.email) from public.recipients x where x.envelope_id = e12)
+           = 'access_code:true,link:false,email_otp:false,link:false'
+       and (select x.access_code_hash from public.recipients x where x.id = g_code) = hash1
+       and (select count(*) from public.audit_events x where x.envelope_id = e12 and x.event_type = 'recipient_check_set') = 4
+       and not exists (select 1 from public.audit_events x where x.envelope_id = e12 and x::text like '%scrypt%')
+    then res := res || E'PASS T111 only a member can choose an extra check, only on a draft, never for a copy-only person; an access code is stored only as a hash of the expected shape and never reaches the audit trail\n';
+    else res := res || 'FAIL T111 choosing a check :: ' || n || E'\n'; end if;
+
+    -- T112 AT2.7: access code. Five wrong tries lock the link; a guess sent while the fifth is being checked gets nothing
+    n := 0;
+    perform public.signer_open(h_code, '203.0.113.9', 'ua');
+    select * into r1 from public.signer_auth_begin(t_code);
+    select * into r2 from public.signer_auth_finish(t_code, false, '203.0.113.9', 'ua');
+    if r1.status <> 'check' or r1.access_code_hash <> hash1 or r2.status <> 'wrong' or r2.attempts_left <> 4 then n := n + 1; end if;
+    begin perform public.signer_auth_finish(t_code, true, null, null); n := n + 1; exception when insufficient_privilege then null; end;   -- "it matched" without a check in progress
+    begin perform public.signer_auth_begin(t_plain); n := n + 1; exception when invalid_parameter_value then null; end;                     -- this person has no access code
+    for i in 2..4 loop
+      perform public.signer_auth_begin(t_code);
+      select * into r2 from public.signer_auth_finish(t_code, false, '203.0.113.9', 'ua');
+    end loop;
+    if r2.status <> 'wrong' or r2.attempts_left <> 1 then n := n + 1; end if;
+    select * into r1 from public.signer_auth_begin(t_code);          -- fifth try, being checked
+    select * into au from public.signer_auth_begin(t_code);          -- a sixth, sent at the same moment
+    select * into r2 from public.signer_auth_finish(t_code, false, '203.0.113.9', 'ua');
+    if r1.status = 'check' and au.status = 'locked' and au.access_code_hash is null and r2.status = 'locked' and n = 0
+       and r2.locked_until between now() + interval '14 minutes' and now() + interval '16 minutes'
+       and (select status from public.signer_auth_begin(t_code)) = 'locked'
+       and (select s.attempts_left::text || '|' || (s.locked_until is not null)::text || '|' || s.method from public.signer_auth_state(t_code) s) = '0|true|access_code'
+       and (select count(*) from public.audit_events x where x.envelope_id = e12 and x.recipient_id = g_code and x.event_type = 'check_failed') = 5
+       and (select count(*) from public.audit_events x where x.envelope_id = e12 and x.recipient_id = g_code and x.event_type = 'link_locked') = 1
+       and (select count(*) from public.notifications q where q.user_id = a and q.kind = 'signer_locked' and q.payload ->> 'envelope_id' = e12::text and q.payload ->> 'by' = 'G Code' and q.payload ->> 'needs_sender' = 'false') = 1
+    then res := res || E'PASS T112 AT2.7: an access code gets five tries; the fifth wrong one locks the link for 15 minutes, a guess sent meanwhile gets nothing, "it matched" cannot be reported without a check in progress, and the sender is told once\n';
+    else res := res || 'FAIL T112 access code lock :: n=' || n || ' ' || coalesce(r1.status, '?') || '/' || coalesce(au.status, '?') || '/' || coalesce(r2.status, '?') || E'\n'; end if;
+
+    -- T113 AT2.7: lockouts grow (15 minutes, 1 hour, then until the sender unlocks); the right code clears everything
+    n := 0;
+    update public.recipient_auth set locked_until = now() - interval '1 minute' where recipient_id = g_code;      -- the first lock has run out
+    for i in 1..5 loop
+      perform public.signer_auth_begin(t_code);
+      select * into r2 from public.signer_auth_finish(t_code, false, null, null);
+    end loop;
+    if r2.status <> 'locked' or r2.locked_until not between now() + interval '59 minutes' and now() + interval '61 minutes' then n := n + 1; end if;
+    update public.recipient_auth set locked_until = now() - interval '1 minute' where recipient_id = g_code;
+    for i in 1..5 loop
+      perform public.signer_auth_begin(t_code);
+      select * into r2 from public.signer_auth_finish(t_code, false, null, null);
+    end loop;
+    if r2.status <> 'locked' or r2.locked_until <> 'infinity'::timestamptz then n := n + 1; end if;
+    if (select count(*) from public.notifications q where q.user_id = a and q.kind = 'signer_locked' and q.payload ->> 'by' = 'G Code' and q.payload ->> 'needs_sender' = 'true') <> 1 then n := n + 1; end if;
+    begin perform public.unlock_recipient_auth(b, e12, g_code); n := n + 1; exception when insufficient_privilege then null; end;           -- not a member
+    if not public.unlock_recipient_auth(a, e12, g_code) or public.unlock_recipient_auth(a, e12, g_code) then n := n + 1; end if;              -- unlocks once
+    for i in 1..4 loop
+      perform public.signer_auth_begin(t_code);
+      perform public.signer_auth_finish(t_code, false, null, null);
+    end loop;
+    select * into r1 from public.signer_auth_begin(t_code);                                                           -- fifth try: the lock is set in advance...
+    select * into r2 from public.signer_auth_finish(t_code, true, '203.0.113.9', 'ua');                               -- ...and lifted because this one was right
+    if n = 0 and r1.status = 'check' and r2.status = 'ok'
+       and (select x.failed_attempts::text || '|' || x.pending_checks || '|' || x.lockouts || '|' || (x.locked_until is null)::text || '|' || (x.last_passed_at is not null)::text
+              from public.recipient_auth x where x.recipient_id = g_code) = '0|0|0|true|true'
+       and (select count(*) from public.audit_events x where x.envelope_id = e12 and x.recipient_id = g_code and x.event_type = 'link_unlocked' and x.actor_id = a) = 1
+       and (select count(*) from public.audit_events x where x.envelope_id = e12 and x.recipient_id = g_code and x.event_type = 'check_passed') = 1
+       and (select count(*) from public.audit_events x where x.envelope_id = e12 and x.recipient_id = g_code and x.event_type = 'link_locked') = 3
+    then res := res || E'PASS T113 AT2.7: the second lockout lasts an hour and the third lasts until the sender unlocks it (only a member can); the right code on the last try clears the count and the lock\n';
+    else res := res || 'FAIL T113 lock growth and unlock :: n=' || n || ' ' || coalesce(r2.status, '?') || E'\n'; end if;
+
+    -- T114 AT2.7: emailed code. Nothing readable is stored; usable once; a wrong code is counted, a missing one is not
+    n := 0;
+    perform public.signer_open(h_mail, '203.0.113.9', 'ua');
+    select * into r1 from public.signer_request_otp(t_mail, '203.0.113.9', 'ua');
+    select o.id into oid from public.notification_outbox o where o.recipient_id = g_mail and o.kind = 'otp';
+    if r1.status <> 'queued' or (select status from public.signer_request_otp(t_mail, null, null)) <> 'wait' then n := n + 1; end if;      -- not twice within a minute
+    if (select o.priority || '|' || o.status || '|' || o.payload::text || '|' || (o.sender_user_id is null)::text from public.notification_outbox o where o.id = oid) <> 'P0_AUTH|queued|{}|true' then n := n + 1; end if;
+    if (select x.otp_hash is not null from public.recipient_auth x where x.recipient_id = g_mail) then n := n + 1; end if;                 -- no code exists until the worker sends the email
+    select * into r2 from public.signer_verify_otp(t_mail, good, null, null);
+    if r2.status <> 'expired' or r2.attempts_left <> 5 then n := n + 1; end if;                                                             -- nothing to compare with: not counted
+    if public.signer_store_otp(oid, good) then n := n + 1; end if;                                                                           -- only the worker, while it is sending that email
+    update public.notification_outbox set status = 'sending', attempts = 1, locked_until = now() + interval '1 minute' where id = oid;
+    begin perform public.signer_store_otp(oid, decode('aabb', 'hex')); n := n + 1; exception when invalid_parameter_value then null; end;
+    if not public.signer_store_otp(oid, good) then n := n + 1; end if;
+    perform public.finish_outbox(oid, 'sent', null, 'msg-otp', null);
+    if (select s.otp_status from public.signer_auth_state(t_mail) s) <> 'sent' then n := n + 1; end if;
+    select * into r2 from public.signer_verify_otp(t_mail, bad, '203.0.113.9', 'ua');
+    if r2.status <> 'wrong' or r2.attempts_left <> 4 then n := n + 1; end if;
+    begin perform public.signer_verify_otp(t_code, good, null, null); n := n + 1; exception when invalid_parameter_value then null; end;    -- that person uses an access code
+    select * into r1 from public.signer_verify_otp(t_mail, good, '203.0.113.9', 'ua');
+    select * into r2 from public.signer_verify_otp(t_mail, good, '203.0.113.9', 'ua');                                                      -- the same code again
+    if n = 0 and r1.status = 'ok' and r2.status = 'expired'
+       and (select x.otp_hash is null and x.failed_attempts = 0 and x.last_passed_at is not null from public.recipient_auth x where x.recipient_id = g_mail)
+       and (select count(*) from public.audit_events x where x.envelope_id = e12 and x.recipient_id = g_mail and x.event_type in ('code_requested', 'check_failed', 'check_passed')) = 3
+       and not exists (select 1 from public.audit_events x where x.envelope_id = e12 and x::text like '%' || encode(good, 'hex') || '%')
+    then res := res || E'PASS T114 AT2.7: an emailed code does not exist until the worker sends it and is stored only as a hash; it works once; a wrong code costs a try, a missing or used one does not; requests are at least a minute apart\n';
+    else res := res || 'FAIL T114 emailed code :: n=' || n || ' ' || coalesce(r1.status, '?') || '/' || coalesce(r2.status, '?') || E'\n'; end if;
+
+    -- T115 AT2.7: old, replaced and expired codes never work; five wrong codes lock the link and destroy the code; five codes an hour at most
+    n := 0;
+    update public.recipient_auth set otp_requested_at = now() - interval '2 minutes' where recipient_id = g_mail;
+    perform public.signer_request_otp(t_mail, null, null);                                                                                  -- request 2
+    select o.id into oid from public.notification_outbox o where o.idempotency_key = 'otp:' || t_mail || ':2';
+    update public.recipient_auth set otp_requested_at = now() - interval '2 minutes' where recipient_id = g_mail;
+    perform public.signer_request_otp(t_mail, null, null);                                                                                  -- request 3 replaces request 2
+    select o.id into oid2 from public.notification_outbox o where o.idempotency_key = 'otp:' || t_mail || ':3';
+    update public.notification_outbox set status = 'sending', attempts = 1, locked_until = now() + interval '1 minute' where id in (oid, oid2);
+    if public.signer_store_otp(oid, good) then n := n + 1; end if;                                                                           -- the replaced request cannot produce a code
+    update public.notification_outbox set created_at = now() - interval '11 minutes' where id = oid2;
+    if public.signer_store_otp(oid2, good) then n := n + 1; end if;                                                                          -- nor can one that waited too long
+    update public.notification_outbox set created_at = now() where id = oid2;
+    if not public.signer_store_otp(oid2, good) then n := n + 1; end if;
+    update public.recipient_auth set otp_expires_at = now() - interval '1 second' where recipient_id = g_mail;
+    if (select status from public.signer_verify_otp(t_mail, good, null, null)) <> 'expired' then n := n + 1; end if;                         -- ten minutes are over
+    update public.recipient_auth set otp_requested_at = now() - interval '2 minutes' where recipient_id = g_mail;
+    perform public.signer_request_otp(t_mail, null, null);                                                                                  -- request 4
+    select o.id into oid from public.notification_outbox o where o.idempotency_key = 'otp:' || t_mail || ':4';
+    update public.notification_outbox set status = 'sending', attempts = 1, locked_until = now() + interval '1 minute' where id = oid;
+    if not public.signer_store_otp(oid, good) then n := n + 1; end if;
+    for i in 1..5 loop
+      select * into r2 from public.signer_verify_otp(t_mail, bad, null, null);
+    end loop;
+    if r2.status <> 'locked' or r2.locked_until not between now() + interval '14 minutes' and now() + interval '16 minutes' then n := n + 1; end if;
+    if (select x.otp_hash is not null from public.recipient_auth x where x.recipient_id = g_mail) then n := n + 1; end if;                  -- the code is gone
+    if (select status from public.signer_verify_otp(t_mail, good, null, null)) <> 'locked' then n := n + 1; end if;                          -- even the right code, while locked
+    update public.recipient_auth set otp_requested_at = now() - interval '2 minutes' where recipient_id = g_mail;
+    if (select status from public.signer_request_otp(t_mail, null, null)) <> 'locked' then n := n + 1; end if;
+    update public.recipient_auth set locked_until = now() - interval '1 minute' where recipient_id = g_mail;                                -- the lock runs out
+    select * into r1 from public.signer_request_otp(t_mail, null, null);                                                                    -- request 5
+    update public.recipient_auth set otp_requested_at = now() - interval '2 minutes' where recipient_id = g_mail;
+    select * into r2 from public.signer_request_otp(t_mail, null, null);                                                                    -- a sixth within the hour
+    if n = 0 and r1.status = 'queued' and r2.status = 'limit'
+       and (select count(*) from public.notification_outbox o where o.recipient_id = g_mail and o.kind = 'otp') = 5
+       and (select count(*) from public.audit_events x where x.envelope_id = e12 and x.recipient_id = g_mail and x.event_type = 'link_locked') = 1
+    then res := res || E'PASS T115 AT2.7: a replaced, late or expired code never works; five wrong codes lock the link and destroy the code, and even the right code is refused while locked; at most five codes an hour\n';
+    else res := res || 'FAIL T115 emailed code limits :: n=' || n || ' ' || coalesce(r1.status, '?') || '/' || coalesce(r2.status, '?') || E'\n'; end if;
+
+    -- T116: a corrected email address gets a new link with a clean slate; the old link's checks are dead
+    n := 0;
+    perform public.correct_recipient(a, e12, g_mail, 'G Mail', 'g-mail-new@example.test', jsonb_build_object('token_id', t_mail2, 'nonce', repeat('44', 16), 'token_sha256', h_mail2));
+    begin perform public.signer_request_otp(t_mail, null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_verify_otp(t_mail, good, null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    if n = 0 and not exists (select 1 from public.recipient_auth x where x.recipient_id = g_mail)
+       and (select x.auth_method from public.recipients x where x.id = g_mail) = 'email_otp'
+       and (select s.attempts_left::text || '|' || s.otp_status from public.signer_auth_state(t_mail2) s) = '5|none'
+       and (select o.status from public.notification_outbox o where o.idempotency_key = 'otp:' || t_mail || ':5') = 'dead'
+       and (select status from public.signer_request_otp(t_mail2, null, null)) in ('queued', 'limit')
+    then res := res || E'PASS T116 after an email address is corrected the new link starts with no code, no count and no lock, keeps the same kind of check; a code email still waiting for the old address is cancelled, and the old link can neither ask for a code nor use one\n';
+    else res := res || 'FAIL T116 corrected address :: ' || n || E'\n'; end if;
+
+    -- T117: a cancelled document's links cannot be checked at all
+    n := 0;
+    perform public.void_envelope(a, e12, 'gate test over');
+    begin perform public.signer_auth_begin(t_code); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_request_otp(t_mail2, null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_auth_state(t_code); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.unlock_recipient_auth(a, e12, g_code); n := n + 1; exception when insufficient_privilege then null; end;
+    if n = 0 then res := res || E'PASS T117 once a document is cancelled its links cannot be used for any code check\n';
+    else res := res || 'FAIL T117 checks after cancelling :: ' || n || E'\n'; end if;
+
+    -- T118: everything here is server-only, and the table of counters and code hashes is closed to signed-in users
+    n := 0;
+    foreach t in array array['public.set_recipient_auth(uuid, uuid, uuid, text, text)', 'public.signer_auth_state(uuid)', 'public.signer_auth_begin(uuid)',
+                             'public.signer_auth_finish(uuid, boolean, inet, text)', 'public.signer_request_otp(uuid, inet, text)', 'public.signer_store_otp(uuid, bytea)',
+                             'public.signer_verify_otp(uuid, bytea, inet, text)', 'public.unlock_recipient_auth(uuid, uuid, uuid)',
+                             'app_private.signer_gate(uuid)', 'app_private.auth_lock_until(int)', 'app_private.recipient_auth_reset()'] loop
+      if has_function_privilege('authenticated', t, 'execute') or has_function_privilege('anon', t, 'execute') then n := n + 1; end if;
+    end loop;
+    if has_function_privilege('service_role', 'app_private.signer_gate(uuid)', 'execute') then n := n + 1; end if;
+    foreach t in array array['public.set_recipient_auth(uuid, uuid, uuid, text, text)', 'public.signer_auth_state(uuid)', 'public.signer_auth_begin(uuid)',
+                             'public.signer_auth_finish(uuid, boolean, inet, text)', 'public.signer_request_otp(uuid, inet, text)', 'public.signer_store_otp(uuid, bytea)',
+                             'public.signer_verify_otp(uuid, bytea, inet, text)', 'public.unlock_recipient_auth(uuid, uuid, uuid)'] loop
+      if not has_function_privilege('service_role', t, 'execute') then n := n + 1; end if;      -- the server must be able to call them
+    end loop;
+    -- the server may read the counters (migration 16) but can change them only through the functions
+    if not has_table_privilege('service_role', 'public.recipient_auth', 'select') or has_table_privilege('service_role', 'public.recipient_auth', 'update')
+       or has_table_privilege('service_role', 'public.recipient_auth', 'insert') or has_table_privilege('service_role', 'public.recipient_auth', 'delete') then n := n + 1; end if;
+    if has_table_privilege('authenticated', 'public.recipient_auth', 'select') or has_table_privilege('anon', 'public.recipient_auth', 'select')
+       or has_table_privilege('authenticated', 'public.recipient_auth', 'update') or has_table_privilege('authenticated', 'public.recipient_auth', 'insert')
+       or not (select c.relrowsecurity from pg_class c where c.oid = 'public.recipient_auth'::regclass)
+       or has_column_privilege('authenticated', 'public.recipients', 'access_code_hash', 'select') then n := n + 1; end if;
+    if n = 0 then res := res || E'PASS T118 the identity-check functions are server-only; signed-in users can neither read nor change the counters and code hashes; the server itself can read them but change them only through the functions\n';
+    else res := res || 'FAIL T118 server-only :: ' || n || E'\n'; end if;
 
     update public.account_controls set approved = false, daily_recipient_cap = 5, daily_envelope_cap = 3 where user_id = a;
   end;
@@ -1044,6 +1274,9 @@ begin
   if (select v2.ok from app_private.audit_verify('env:' || e10) v2)
   then res := res || E'PASS T103 the audit chain of the reminded and expired document verifies\n';
   else res := res || E'FAIL T103 reminder/expiry chain\n'; end if;
+  if (select v2.ok from app_private.audit_verify('env:' || e12) v2)
+  then res := res || E'PASS T119 the audit chain of the document with identity checks, lockouts and a corrected address verifies\n';
+  else res := res || E'FAIL T119 identity-check chain\n'; end if;
 
   begin
     perform app_private.sanction();
@@ -1163,6 +1396,12 @@ begin
   select string_agg(app_private.gen_public_code(), ',') into t from generate_series(1, 5);
   res := res || 'INFO sample codes: ' || t || E'\n';
 
-  raise exception E'RLS_TEST_RESULTS\n%', res;
+  -- A compact summary comes first: a tool that shows a long message may cut the middle out, and no result may be hidden.
+  raise exception E'RLS_TEST_RESULTS\nSUMMARY passed=% failed=%\nFAILED: %\nPASSED IDS: %\n%',
+    (select count(*) from unnest(string_to_array(res, E'\n')) l where l like 'PASS %'),
+    (select count(*) from unnest(string_to_array(res, E'\n')) l where l like 'FAIL %'),
+    coalesce((select string_agg(l, ' || ') from unnest(string_to_array(res, E'\n')) l where l like 'FAIL %'), 'none'),
+    (select string_agg(split_part(u.l, ' ', 2), ' ' order by u.i) from unnest(string_to_array(res, E'\n')) with ordinality u(l, i) where u.l like 'PASS %'),
+    res;
 end
 $test$;

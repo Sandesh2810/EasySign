@@ -4,10 +4,11 @@
 import { env } from '@/lib/env';
 import { loadBudget } from '@/lib/email-budget-state';
 import { describeNotification } from '@/lib/notifications';
+import { generateOtp, hashOtp } from '@/lib/signer-token';
 import { byteaToBuffer, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
-import { completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
+import { completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, otpTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
 import { drainOutbox, type OutboxDeps, type OutboxRow, type Prepared } from './dispatch';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -52,9 +53,31 @@ async function prepareDigest(row: OutboxRow): Promise<Prepared> {
   };
 }
 
+/**
+ * The six-digit code a signer asked for (D-59). The code is made here, at the moment of sending, and
+ * exists only in this function and in the email: the database is given a keyed hash and nothing else.
+ */
+async function prepareOtp(row: OutboxRow): Promise<Prepared> {
+  const db = supabaseAdmin();
+  if (!row.recipient_id || !row.envelope_id) throw new Error('code request without a person');
+  const [{ data: recipient }, { data: envelope }] = await Promise.all([
+    db.from('recipients').select('name, email').eq('id', row.recipient_id).maybeSingle(),
+    db.from('envelopes').select('title').eq('id', row.envelope_id).maybeSingle(),
+  ]);
+  if (!recipient || !envelope) throw new Error('recipient not found');
+  const code = generateOtp();
+  const hash = hashOtp(code, row.recipient_id, env.signerTokenKey());
+  // The database refuses a request that is stale, replaced by a newer one, locked, or made through a dead link.
+  const stored = await db.rpc('signer_store_otp', { p_outbox_id: row.id, p_otp_hash: `\\x${hash.toString('hex')}` });
+  if (stored.error) throw new Error(`code could not be stored: ${stored.error.message}`);
+  if (stored.data !== true) throw new Error('code request is no longer current');
+  return { to: recipient.email as string, email: otpTemplate({ name: recipient.name as string, title: envelope.title as string, code, minutes: 10 }) };
+}
+
 async function prepare(row: OutboxRow): Promise<Prepared> {
   const db = supabaseAdmin();
   if (row.kind === 'digest') return prepareDigest(row);
+  if (row.kind === 'otp') return prepareOtp(row);
   if (!row.envelope_id) throw new Error(`unsupported email kind ${row.kind}`);
   const { data: envelope } = await db
     .from('envelopes')

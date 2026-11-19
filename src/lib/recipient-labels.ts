@@ -9,6 +9,15 @@ export const ROLE_LABEL: Record<Role, string> = {
   cc: 'Gets a copy at the end',
 };
 
+export type IdentityCheck = 'link' | 'access_code' | 'email_otp';
+
+/** The extra identity check a sender can ask for before a person's link opens anything (D-59). */
+export const CHECK_LABEL: Record<IdentityCheck, string> = {
+  link: 'No extra check',
+  access_code: 'Access code that you give them',
+  email_otp: 'Code sent to their email',
+};
+
 /** What the sender sees next to each person once the document has been sent. */
 export function progressLabel(role: Role, status: RecipientStatus): string {
   if (role === 'cc') return status === 'skipped' ? 'No copy (document stopped)' : 'Gets the finished copy';
