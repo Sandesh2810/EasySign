@@ -21,6 +21,9 @@ export const VARS = [
   ['SUPABASE_SECRET_KEY', 'Supabase SECRET key (starts sb_secret_)', 'secret', ''],
   ['APP_URL', 'Base URL of the app', 'plain', 'http://localhost:3000'],
   ['NOTIFY_MODE', 'Email mode: log | sandbox | live', 'plain', 'log'],
+  ['RESEND_API_KEY', 'Resend API key (starts re_; sending access only)', 'secret', ''],
+  ['MAIL_FROM', 'Sender shown on emails, e.g. EasySign <notify@easysign.work.gd>', 'plain', 'EasySign <notify@easysign.work.gd>'],
+  ['SANDBOX_RECIPIENTS', 'Sandbox mode only: the ONLY addresses that may receive email (comma-separated)', 'plain', ''],
   ['SIGNER_TOKEN_KEY', 'Key that derives signer links', 'generated', ''],
   ['SESSION_COOKIE_KEY', 'Key that signs signer session cookies', 'generated', ''],
   ['STORAGE_KEY', 'Key that encrypts files kept on server disk', 'generated', ''],
@@ -95,6 +98,13 @@ export function checkSecretKey(value) {
   return 'That does not look like a Supabase secret key (it should start with sb_secret_).';
 }
 
+/** Catch pasting the wrong thing into the Resend key. Returns a problem description or null. */
+export function checkResendKey(value) {
+  if (!value) return null;
+  if (value.startsWith('re_') && value.length >= 20 && !/\s/.test(value)) return null;
+  return 'That does not look like a Resend API key (it should start with re_).';
+}
+
 async function main() {
   const current = existsSync(file) ? parse(readFileSync(file, 'utf8')) : {};
   const args = process.argv.slice(2);
@@ -124,7 +134,7 @@ async function main() {
     const shown = kind === 'secret' ? (has ? '(already set, hidden)' : '(not set)') : current[name] || def || '(empty)';
     for (;;) {
       const a = await prompt(`${name}\n  ${desc}\n  current: ${shown}\n  ${kind === 'secret' ? 'Paste the value and press Enter (nothing will appear as you paste): ' : 'New value (Enter keeps the current one): '}`, kind === 'secret');
-      const problem = name === 'SUPABASE_SECRET_KEY' ? checkSecretKey(a) : null;
+      const problem = name === 'SUPABASE_SECRET_KEY' ? checkSecretKey(a) : name === 'RESEND_API_KEY' ? checkResendKey(a) : null;
       if (problem) {
         console.log(`  ${problem} Try again, or press Enter to skip.\n`);
         continue;

@@ -131,6 +131,8 @@ async function prepare(row: OutboxRow): Promise<Prepared> {
     if (!recipient || !token) throw new Error('recipient or link not found');
     return {
       to: recipient.email as string,
+      // the sender's account address, which they confirmed when they signed up
+      replyTo: sender.email,
       email: signatureRequestTemplate({
         signerName: recipient.name as string,
         senderName: sender.name,

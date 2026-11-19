@@ -21,6 +21,8 @@ export interface OutboxRow {
 export interface Prepared {
   to: string;
   email: RenderedEmail;
+  /** where a reply goes: only ever an address that is confirmed (a signed-in account's email) */
+  replyTo?: string;
   attachments?: MailAttachment[];
 }
 
@@ -56,6 +58,7 @@ export async function drainOutbox(deps: OutboxDeps, log: (msg: string) => void):
         html: prepared.email.html,
         text: prepared.email.text,
         attachments: prepared.attachments,
+        replyTo: prepared.replyTo,
         idempotencyKey: row.idempotency_key,
       });
       log(`email ${row.kind} ${row.id}: ${await deps.finish(row.id, 'sent', { messageId: sent.id })}`);

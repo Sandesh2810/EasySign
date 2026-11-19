@@ -80,7 +80,11 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
 
   const confirmUrl = `${env.appUrl()}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=signup`;
   const mail = verifyEmailTemplate({ name, confirmUrl });
-  await getMailProvider().send({ to: address, kind: 'auth_verify', ...mail, idempotencyKey: `auth_verify:${data.user.id}:${data.properties.hashed_token.slice(0, 16)}` });
+  try {
+    await getMailProvider().send({ to: address, kind: 'auth_verify', ...mail, idempotencyKey: `auth_verify:${data.user.id}:${data.properties.hashed_token.slice(0, 16)}` });
+  } catch {
+    return { ok: false, message: 'Your account was created, but the confirmation email could not be sent. Please try again later, or ask the administrator to confirm your address.' };
+  }
   // counted after the provider accepted it, so the meter matches what was really handed over
   const counted = await supabaseAdmin().rpc('email_budget_record', { p_class: 'P0_AUTH', p_user: null, p_restricted: false });
   if (counted.error) console.error('email budget: a sign-up email was sent but could not be counted');

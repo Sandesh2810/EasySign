@@ -1,8 +1,12 @@
-// Chooses the mail provider from NOTIFY_MODE. Only "log" exists so far: nothing can leave the machine.
+// Chooses the mail provider from NOTIFY_MODE.
+//   log     (default): nothing leaves the computer; emails are written to app\.dev-outbox.
+//   sandbox: real email through Resend, but only to the addresses in SANDBOX_RECIPIENTS.
+//   live:    real email to everyone. Only after the owner's explicit go-ahead (CLAUDE.md); he sets it himself.
 import 'server-only';
 import path from 'node:path';
 import { NOTIFY_MODE } from '@/config/brand';
 import { LogMailProvider } from './log-provider';
+import { ResendMailProvider } from './resend-provider';
 import type { MailProvider } from './types';
 
 export const DEV_OUTBOX_DIR = path.join(process.cwd(), '.dev-outbox');
@@ -15,6 +19,11 @@ export function getMailProvider(): MailProvider {
     provider = new LogMailProvider(DEV_OUTBOX_DIR);
     return provider;
   }
-  // sandbox and live need the Resend provider and a verified sending domain (Phase 2), plus the owner's explicit go-ahead.
-  throw new Error(`NOTIFY_MODE=${NOTIFY_MODE} is not available yet. Set NOTIFY_MODE=log.`);
+  provider = new ResendMailProvider({
+    apiKey: process.env.RESEND_API_KEY ?? '',
+    from: process.env.MAIL_FROM ?? '',
+    mode: NOTIFY_MODE,
+    allowed: (process.env.SANDBOX_RECIPIENTS ?? '').split(','),
+  });
+  return provider;
 }
