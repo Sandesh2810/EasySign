@@ -10,6 +10,8 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { env } from '@/lib/env';
 import { decide } from '@/lib/email-budget';
 import { loadBudget } from '@/lib/email-budget-state';
+import { capacityBlock } from '@/lib/free-tier';
+import { loadPlatformUsage } from '@/lib/platform-usage';
 import { safeNext } from '@/lib/safe-redirect';
 import { allow, clientIp, LIMITS_AUTH, TOO_MANY } from '@/lib/rate-limit';
 import { getMailProvider } from '@/mail';
@@ -49,6 +51,10 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
   // Sign-up emails count against the same daily email budget as everything else (they have their own
   // reserved share, and may spill into the rest). If the whole day is used up, say so before creating an
   // account that could not be confirmed.
+  // brief: new registrations stop, politely, when the free hosting plan is 90% full
+  const usage = await loadPlatformUsage();
+  const capacity = usage ? capacityBlock(usage) : { blocked: false as const };
+  if (capacity.blocked) return { ok: false, message: capacity.message };
   const budget = await loadBudget(null).catch(() => null);
   if (!budget) return { ok: false, message: 'Something went wrong on our side. Please try again in a minute.' };
   if (decide('P0_AUTH', budget.state).action === 'defer') {

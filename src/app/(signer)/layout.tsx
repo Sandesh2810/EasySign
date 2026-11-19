@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { PRODUCT_NAME } from '@/config/brand';
+import { ReportAbuseFooter } from './report-abuse';
 
 // The signing surface is deliberately plain: white, high contrast, nothing decorative.
 export const metadata: Metadata = { robots: { index: false, follow: false } };
@@ -13,6 +14,7 @@ export default function SignerLayout({ children }: LayoutProps<'/'>) {
         </p>
       </header>
       <main className="flex-1">{children}</main>
+      <ReportAbuseFooter />
     </div>
   );
 }

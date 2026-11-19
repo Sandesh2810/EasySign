@@ -67,6 +67,16 @@ export function describeNotification(kind: string, payload: unknown): NoticeView
         path,
         tone: 'attention',
       };
+    case 'abuse_report':
+      return { text: `Someone reported ${title} as suspicious. Open Accounts to read the report and decide what to do.`, path: '/app/admin', tone: 'attention' };
+    case 'account_suspended':
+      return {
+        text: 'Your account has been suspended by the administrator. Your open documents are on hold: nobody can sign them for now, and you cannot send new ones. Completed documents are not affected. Contact the administrator.',
+        path: null,
+        tone: 'attention',
+      };
+    case 'account_suspension_lifted':
+      return { text: 'The suspension of your account has been lifted. Your open documents continue and you can send again.', path: null, tone: 'good' };
     case 'account_approved':
       return { text: 'Your account was approved. You can now send documents to other people.', path: null, tone: 'good' };
     case 'account_approval_removed':

@@ -28,6 +28,7 @@ function send(bytes: Uint8Array, type: string, disposition: string) {
 export async function GET(request: NextRequest) {
   const ctx = await loadSignerContext();
   if (!ctx) return json(401, { error: 'Open your signing link again.' });
+  if (ctx.onHold) return json(423, { error: 'This document is on hold and cannot be opened right now.' });
   // a page view needs two or three files; this stops one link being used to pull the file in a loop
   if (!(await allow({ bucket: 'sign_file', limit: 240, windowSeconds: 3600 }, ctx.tokenId))) return json(429, { error: TOO_MANY });
   const part = request.nextUrl.searchParams.get('part') ?? 'original';

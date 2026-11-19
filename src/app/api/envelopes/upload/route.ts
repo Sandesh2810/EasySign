@@ -4,6 +4,8 @@
 import { randomUUID } from 'node:crypto';
 import type { NextRequest } from 'next/server';
 import { LIMITS } from '@/config/brand';
+import { capacityBlock } from '@/lib/free-tier';
+import { loadPlatformUsage } from '@/lib/platform-usage';
 import { friendlyDbError, json, requireApiUser } from '@/lib/request-guard';
 import { allow, TOO_MANY } from '@/lib/rate-limit';
 import { supabaseAdmin } from '@/lib/supabase/admin';
@@ -19,6 +21,11 @@ export async function POST(request: NextRequest) {
   const { user } = auth;
 
   if (!(await allow(UPLOADS_PER_HOUR, user.id))) return json(429, { error: TOO_MANY });
+
+  // brief: uploads stop, politely, when the free hosting plan is 90% full
+  const usage = await loadPlatformUsage();
+  const capacity = usage ? capacityBlock(usage) : { blocked: false as const };
+  if (capacity.blocked) return json(507, { error: capacity.message });
 
   // Refuse oversized bodies before reading them (multipart overhead allowed for).
   const declared = Number(request.headers.get('content-length') ?? 0);

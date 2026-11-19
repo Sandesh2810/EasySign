@@ -41,6 +41,9 @@ async function Sign() {
   }
   const { envelope, recipient } = ctx;
   const admin = supabaseAdmin();
+  if (ctx.onHold) {
+    return <Message title="This document is on hold" body="This document is on hold. EasySign has suspended the account that sent it while a concern is being looked into. You cannot sign it right now. Do not send money or personal details to anyone because of this document. If you know the sender, contact them another way." />;
+  }
   if (ctx.gate) {
     // Nothing about the document is shown here beyond the sender's check itself: no title, no pages.
     const { data } = await admin.rpc('signer_auth_state', { p_token_id: ctx.tokenId });

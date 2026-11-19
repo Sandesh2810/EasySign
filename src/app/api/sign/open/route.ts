@@ -29,6 +29,10 @@ export async function POST(request: NextRequest) {
   });
   const row = Array.isArray(data) ? data[0] : null;
   if (error || !row) return json(404, { error: INVALID });
+  // The sender's account is suspended: no session, and a clear warning (AT2.10). The attempt is in the audit trail.
+  if (row.turn === 'held') {
+    return json(423, { error: "This document is on hold. EasySign has suspended the account that sent it while a concern is being looked into. You cannot sign it right now. Do not send money or personal details to anyone because of this document. If you know the sender, contact them another way." });
+  }
   // A valid link whose turn has not come: no session is created (the attempt is already in the audit trail).
   if (row.turn === 'waiting') {
     return json(403, { error: 'It is not your turn yet. Other people sign this document before you. You will be told when it is ready for you; this same link will work then.' });

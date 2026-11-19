@@ -82,7 +82,7 @@ export function signatureRequestTemplate(v: { signerName: string; senderName: st
           : `${esc(v.senderName)} has sent you <strong>${esc(v.title)}</strong> to ${w.verb}.${noAction} You do not need an account.`,
       ],
       button: { label: w.button, url: v.signUrl },
-      footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can ${w.act}. If you were not expecting this document, ignore this email.`,
+      footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can ${w.act}. If you were not expecting this document, ignore this email, or open the link and choose “Report this document” at the bottom of the page: opening it signs nothing.`,
     }),
     text: [
       `Hello ${v.signerName},`,
@@ -93,7 +93,7 @@ export function signatureRequestTemplate(v: { signerName: string; senderName: st
       v.signUrl,
       '',
       `The link is personal to you and works until ${v.expiresOn}. Do not forward this email: anyone who has the link can ${w.act}.`,
-      'If you were not expecting this document, ignore this email.',
+      'If you were not expecting this document, ignore this email, or open the link and choose "Report this document" at the bottom of the page: opening it signs nothing.',
     ].join('\n'),
   };
 }

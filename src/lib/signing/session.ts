@@ -42,6 +42,8 @@ export interface SignerContext {
   expiresAt: string;
   /** null once the check is passed, or when the sender asked for none. */
   gate: SignerGate | null;
+  /** The sender's account is suspended and the document is still open: nothing can be done with it for now. */
+  onHold: boolean;
   recipient: { id: string; name: string; email: string; role: string; status: string; is_sender: boolean; completed_at: string | null };
   envelope: {
     id: string;
@@ -83,7 +85,15 @@ export async function loadSignerContext(opts: { allowUnverified?: boolean } = {}
   const method = recipient.auth_method as string;
   const gate: SignerGate | null = recipient.is_sender || claims.level === 'verified' ? null : method === 'access_code' || method === 'email_otp' ? method : null;
   if (gate && !opts.allowUnverified) return null;
-  return { tokenId: tok.id as string, expiresAt: tok.expires_at as string, gate, recipient: recipient as SignerContext['recipient'], envelope: envelope as SignerContext['envelope'] };
+  let onHold = false;
+  if (envelope.status === 'sent' || envelope.status === 'in_progress') {
+    const [{ data: account }, { data: org }] = await Promise.all([
+      admin.from('account_controls').select('trust_level').eq('user_id', envelope.sender_id).maybeSingle(),
+      admin.from('org_controls').select('status').eq('org_id', envelope.org_id).maybeSingle(),
+    ]);
+    onHold = account?.trust_level === 'suspended' || org?.status === 'suspended';
+  }
+  return { tokenId: tok.id as string, expiresAt: tok.expires_at as string, gate, onHold, recipient: recipient as SignerContext['recipient'], envelope: envelope as SignerContext['envelope'] };
 }
 
 /** IP (null when it is not a real address, e.g. local development) and browser string for the audit trail. */

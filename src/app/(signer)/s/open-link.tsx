@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { ReportAbuse } from '../report-abuse';
 
-type State = { phase: 'working' } | { phase: 'error'; message: string; waiting?: boolean };
+type State = { phase: 'working' } | { phase: 'error'; message: string; waiting?: boolean; held?: boolean; token?: string };
 
 export function OpenLink() {
   const [state, setState] = useState<State>({ phase: 'working' });
@@ -30,7 +31,8 @@ export function OpenLink() {
           return;
         }
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        setState({ phase: 'error', waiting: res.status === 403 && /turn/i.test(body?.error ?? ''), message: body?.error ?? 'This signing link could not be opened. Try again in a moment.' });
+        // The link did not open, so there is no session: keep the token in memory so the document can still be reported.
+        setState({ phase: 'error', waiting: res.status === 403 && /turn/i.test(body?.error ?? ''), held: res.status === 423, token, message: body?.error ?? 'This signing link could not be opened. Try again in a moment.' });
       } catch {
         setState({ phase: 'error', message: 'We could not reach the server. Check your connection and open the link again.' });
       }
@@ -50,8 +52,13 @@ export function OpenLink() {
   if (state.phase === 'error') {
     return (
       <div role="alert">
-        <h1 className="text-2xl font-medium text-ink">{state.waiting ? 'It is not your turn yet' : 'This link did not open'}</h1>
+        <h1 className="text-2xl font-medium text-ink">{state.held ? 'This document is on hold' : state.waiting ? 'It is not your turn yet' : 'This link did not open'}</h1>
         <p className="mt-3 text-base text-ink-body">{state.message}</p>
+        {state.token ? (
+          <div className="mt-8">
+            <ReportAbuse token={state.token} startOpen={state.held} />
+          </div>
+        ) : null}
       </div>
     );
   }

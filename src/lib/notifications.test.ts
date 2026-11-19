@@ -22,6 +22,9 @@ describe('in-app notices', () => {
       'email_failed',
       'email_deferred',
       'signer_locked',
+      'abuse_report',
+      'account_suspended',
+      'account_suspension_lifted',
       'account_approved',
       'account_approval_removed',
     ];
