@@ -17,6 +17,8 @@ export const env = {
   signerTokenKey: () => required('SIGNER_TOKEN_KEY'),
   sessionCookieKey: () => required('SESSION_COOKIE_KEY'),
   storageKey: () => required('STORAGE_KEY'),
+  sealP12Base64: () => required('SEAL_P12_BASE64'),
+  sealP12Passphrase: () => required('SEAL_P12_PASSPHRASE'),
   appUrl: () => (process.env.APP_URL ?? 'http://localhost:3000').replace(/\/+$/, ''),
   hasSecretKey: () => Boolean(process.env.SUPABASE_SECRET_KEY),
 };

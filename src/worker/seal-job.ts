@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { env } from '@/lib/env';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { buildSealedPdf, type SealField, type SealInput, type SealRecipient } from '@/pdf/seal';
+import { loadSealKey, type SealKey } from '@/pdf/seal-key';
 import { getStorage, getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
 
@@ -110,8 +111,30 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
   };
 }
 
+// The seal key is checked once per worker start. Without a working key no seal job is claimed at all,
+// so documents wait (and are sealed once the key is fixed) instead of being marked failed.
+let sealKey: SealKey | null = null;
+let sealKeyProblem: string | null = null;
+let sealKeyLogged = false;
+function getSealKey(log: (msg: string) => void): SealKey | null {
+  if (!sealKey && !sealKeyProblem) {
+    try {
+      sealKey = loadSealKey(env.sealP12Base64(), env.sealP12Passphrase());
+    } catch (e) {
+      sealKeyProblem = e instanceof Error ? e.message : 'unknown problem';
+    }
+  }
+  if (!sealKeyLogged) {
+    sealKeyLogged = true;
+    log(sealKey ? `seal key ${sealKey.certSha256.slice(0, 16)}… (valid until ${sealKey.notAfter.toISOString().slice(0, 10)})` : `SEALING PAUSED: ${sealKeyProblem} Documents wait until this is fixed.`);
+  }
+  return sealKey;
+}
+
 /** Claims and runs at most one seal job. Returns what happened so the loop can decide whether to look again at once. */
 export async function runOneSealJob(log: (msg: string) => void): Promise<'none' | 'sealed' | 'lost' | 'retry' | 'failed'> {
+  const key = getSealKey(log);
+  if (!key) return 'none';
   const db = supabaseAdmin();
   const claim = await db.rpc('claim_seal_job', { p_lease_seconds: 300 });
   if (claim.error) throw new Error(`claim_seal_job: ${claim.error.message}`);
@@ -122,7 +145,7 @@ export async function runOneSealJob(log: (msg: string) => void): Promise<'none' 
   let written: string[] = [];
   try {
     const { input, orgId } = await buildInput(job);
-    const out = await buildSealedPdf(input);
+    const out = await buildSealedPdf({ ...input, seal: { key, signingTime: new Date() } });
     const sealedPath = `${orgId}/${job.envelope_id}/sealed-${job.attempt_id}.pdf`;
     const certificatePath = `${orgId}/${job.envelope_id}/certificate-${job.attempt_id}.pdf`;
     written = [sealedPath, certificatePath];
@@ -147,7 +170,7 @@ export async function runOneSealJob(log: (msg: string) => void): Promise<'none' 
       log(`seal ${job.envelope_id}: lease lost, result discarded`);
       return 'lost';
     }
-    log(`seal ${job.envelope_id}: completed (${out.pageCount} pages + ${out.certificatePages} certificate, sha256 ${out.finalSha256.slice(0, 12)}…)${out.warnings.length ? ` warnings: ${out.warnings.join(' | ')}` : ''}`);
+    log(`seal ${job.envelope_id}: completed (${out.pageCount} pages + ${out.certificatePages} certificate, sha256 ${out.finalSha256.slice(0, 12)}…, seal key ${out.sealKeyId?.slice(0, 16)}…)${out.warnings.length ? ` warnings: ${out.warnings.join(' | ')}` : ''}`);
     return 'sealed';
   } catch (e) {
     const message = e instanceof Error ? e.message : 'unknown error';

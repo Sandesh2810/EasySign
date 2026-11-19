@@ -1,6 +1,7 @@
 // Sealing engine (docs/ARCHITECTURE.md section 5, DECISIONS D-22, D-33).
 // original bytes (never modified) -> draw field values and stamps -> footer band + QR on every page
-// -> append Certificate of Completion -> save once (object streams off) -> hash -> standalone certificate.
+// -> append Certificate of Completion -> signature placeholder -> save once (object streams off)
+// -> sign (PKCS#7 detached, SHA-256) -> check our own output independently -> hash -> standalone certificate.
 // Pure function of its input: no database, no network. Server/worker only.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -8,8 +9,15 @@ import { createHash } from 'node:crypto';
 import { PDFDocument, rgb, degrees, type PDFFont, type PDFImage, type PDFPage, type Color } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import QRCode from 'qrcode';
+// named class, not the default export: the default comes through as a wrapper object in the worker's bundle
+import { SignPdf } from '@signpdf/signpdf';
+import { P12Signer } from '@signpdf/signer-p12';
+import { pdflibAddPlaceholder } from '@signpdf/placeholder-pdf-lib';
+import { SUBFILTER_ADOBE_PKCS7_DETACHED } from '@signpdf/utils';
 import { PRODUCT_NAME } from '@/config/brand';
 import { displaySize, normaliseBox, rectToPdf, type FracRect, type PageBox, type PdfRect } from '@/lib/geometry';
+import type { SealKey } from './seal-key';
+import { checkPdfSeal } from './verify-seal';
 
 /** Height of the band added to the displayed bottom of every original page so the footer never covers content. */
 export const FOOTER_BAND = 48;
@@ -51,14 +59,19 @@ export interface SealInput {
   fields: SealField[];
   /** audit chain position at sealing_started (D-22) */
   audit: { checkpointSeq: number; checkpointHash: string };
+  /** cryptographic seal (Phase 3, AT3.1). Without it the file is sealed visually only (tests of the layout). The worker always passes it. */
+  seal?: { key: SealKey; signingTime: Date };
 }
 
 export interface SealOutput {
   sealed: Uint8Array;
   /** standalone certificate; unlike the appended one it carries the sealed file's hash */
   certificate: Uint8Array;
+  /** with a seal: SHA-256 over the bytes the signature covers (D-22); without one, equal to finalSha256 */
   presealSha256: string;
   finalSha256: string;
+  /** SHA-256 of the seal certificate that signed the file, or null when unsigned */
+  sealKeyId: string | null;
   pageCount: number;
   certificatePages: number;
   warnings: string[];
@@ -376,6 +389,7 @@ function writeCertificate(doc: PDFDocument, fonts: Fonts, input: SealInput, orig
     y -= 2;
     para('The SHA-256 of the sealed file is shown on the standalone certificate and at the verify address. A file cannot contain its own hash.', 7.5, MUTED);
   }
+  kvLines('Digital seal', input.seal ? [`Signed with the ${PRODUCT_NAME} seal certificate (self-signed)`, `key id ${input.seal.key.certSha256}`] : ['None']);
 
   heading('Recipients');
   const sorted = [...input.recipients].sort((p, q) => p.order - q.order);
@@ -408,7 +422,10 @@ function writeCertificate(doc: PDFDocument, fonts: Fonts, input: SealInput, orig
       `Where links were shared by the sender, ${PRODUCT_NAME} did not itself deliver them to the addresses shown. ` +
       'It is not proof of physical presence, and it is not proof of identity beyond possession of that link (and control of the email address, where the link was emailed) and any access code used. ' +
       'All times are Coordinated Universal Time (UTC). The audit checkpoint is the position and hash of the envelope\'s audit chain when sealing began; ' +
-      'an audit export is consistent with this certificate when its event at that position has the same hash.',
+      'an audit export is consistent with this certificate when its event at that position has the same hash.' +
+      (input.seal
+        ? ` The sealed document carries a digital seal: a PDF reader such as Adobe Acrobat Reader reports whether the file was changed after sealing. The seal certificate is self-signed, so a reader cannot confirm on its own who ${PRODUCT_NAME} is; enter the verification code at the verify address to check the document with ${PRODUCT_NAME}.`
+        : ''),
   );
   return pages;
 }
@@ -460,9 +477,36 @@ export async function buildSealedPdf(input: SealInput): Promise<SealOutput> {
 
   doc.setProducer(PRODUCT_NAME);
   doc.setModificationDate(input.envelope.completedAtUtc);
-  const sealed = await doc.save({ useObjectStreams: false });
+  if (input.seal) {
+    pdflibAddPlaceholder({
+      pdfDoc: doc,
+      reason: `Sealed by ${PRODUCT_NAME} after every party completed`,
+      contactInfo: '',
+      name: PRODUCT_NAME,
+      location: '',
+      signingTime: input.seal.signingTime,
+      subFilter: SUBFILTER_ADOBE_PKCS7_DETACHED,
+      appName: PRODUCT_NAME,
+    });
+  }
+  const saved = await doc.save({ useObjectStreams: false });
+  let sealed: Uint8Array = saved;
+  let presealSha256: string;
+  let sealKeyId: string | null = null;
+  if (input.seal) {
+    const { key, signingTime } = input.seal;
+    sealed = await new SignPdf().sign(Buffer.from(saved), new P12Signer(key.p12, { passphrase: key.passphrase }), signingTime);
+    // check our own output independently before anyone sees it: a broken seal is worse than none
+    const check = checkPdfSeal(sealed);
+    if (!check.intact || check.signerCertSha256 !== key.certSha256 || !check.computedDigest) {
+      throw new Error(`The sealed file failed its own signature check: ${check.problem ?? 'wrong signing certificate'}`);
+    }
+    presealSha256 = check.computedDigest;
+    sealKeyId = key.certSha256;
+  } else {
+    presealSha256 = sha256(sealed); // no cryptographic signature: the two hashes are the same (D-22)
+  }
   const finalSha256 = sha256(sealed);
-  const presealSha256 = finalSha256; // Phase 1: no cryptographic signature yet, so the two are the same (D-22)
 
   const cdoc = await PDFDocument.create();
   const cfonts = await embedFonts(cdoc, warnings);
@@ -474,5 +518,5 @@ export async function buildSealedPdf(input: SealInput): Promise<SealOutput> {
   cdoc.setModificationDate(input.envelope.completedAtUtc);
   const certificate = await cdoc.save({ useObjectStreams: false });
 
-  return { sealed, certificate, presealSha256, finalSha256, pageCount: total, certificatePages: certPages.length, warnings: [...warnings] };
+  return { sealed, certificate, presealSha256, finalSha256, sealKeyId, pageCount: total, certificatePages: certPages.length, warnings: [...warnings] };
 }

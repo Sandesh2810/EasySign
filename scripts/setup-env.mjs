@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { createSealP12 } from './lib/seal-key.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const file = path.join(root, '.env.local');
@@ -27,6 +28,8 @@ export const VARS = [
   ['SIGNER_TOKEN_KEY', 'Key that derives signer links', 'generated', ''],
   ['SESSION_COOKIE_KEY', 'Key that signs signer session cookies', 'generated', ''],
   ['STORAGE_KEY', 'Key that encrypts files kept on server disk', 'generated', ''],
+  ['SEAL_P12_PASSPHRASE', 'Passphrase of the seal certificate', 'generated', ''],
+  ['SEAL_P12_BASE64', 'Seal certificate that signs sealed PDFs (self-signed, made on this PC)', 'seal', ''],
   ['NEXT_PUBLIC_TURNSTILE_SITE_KEY', 'Cloudflare Turnstile site key (leave empty until set up)', 'plain', ''],
   ['TURNSTILE_SECRET_KEY', 'Cloudflare Turnstile secret key (leave empty until set up)', 'secret', ''],
 ];
@@ -121,6 +124,16 @@ async function main() {
       if (!only) console.log(`${name}: ${has ? 'kept' : 'generated'}`);
       continue;
     }
+    if (kind === 'seal') {
+      // made once on this PC; remade only if missing or if its passphrase was just (re)generated
+      const passphraseIsNew = next.SEAL_P12_PASSPHRASE !== current.SEAL_P12_PASSPHRASE;
+      if (!has || passphraseIsNew) {
+        const made = createSealP12({ passphrase: next.SEAL_P12_PASSPHRASE });
+        next[name] = made.p12.toString('base64');
+        if (!only) console.log(`${name}: generated (key id ${made.certSha256.slice(0, 16)}…, valid until ${made.notAfter.toISOString().slice(0, 10)})`);
+      } else if (!only) console.log(`${name}: kept`);
+      continue;
+    }
     if (flags[name] !== undefined) {
       next[name] = flags[name];
       console.log(`${name}: set from command line`);
@@ -155,7 +168,8 @@ async function main() {
     for (const name of only) {
       const kind = VARS.find(([n]) => n === name)?.[2];
       const v = next[name] ?? '';
-      const what = !v ? 'NOT SAVED (empty)' : kind === 'secret' ? `saved (${v.length} characters, hidden)` : `saved: ${v}`;
+      const hidden = kind === 'secret' || kind === 'generated' || kind === 'seal';
+      const what = !v ? 'NOT SAVED (empty)' : hidden ? `saved (${v.length} characters, hidden)` : `saved: ${v}`;
       console.log(`  ${name.padEnd(20)} ${what}`);
     }
   }
