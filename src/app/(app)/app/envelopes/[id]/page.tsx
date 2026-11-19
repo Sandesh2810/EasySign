@@ -12,6 +12,8 @@ import type { FieldType } from '@/lib/fields';
 import { progressLabel, ROLE_LABEL, type IdentityCheck } from '@/lib/recipient-labels';
 import type { RecipientStatus, Role, RoutingMode } from '@/lib/routing';
 import { deleteDraftAction } from '../actions';
+import { MoveToFolderForm } from '../../folders/folder-forms';
+import { buildTimeline } from '@/lib/timeline';
 import { FieldEditor, type EditorField } from './field-editor';
 import { PersonActions, VoidPanel } from './open-actions';
 import { RecipientsEditor, type EditableRecipient } from './recipients-editor';
@@ -46,12 +48,15 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
   if (!id.success) notFound();
 
   const supabase = await createSupabaseServerClient();
-  const [{ data: env }, { data: docs }, { data: recipientRows }, { data: fields }, { data: profile }] = await Promise.all([
-    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason, expires_at, expired_at, remind_after_days, remind_every_days, remind_max').eq('id', id.data).maybeSingle(),
+  const [{ data: env }, { data: docs }, { data: recipientRows }, { data: fields }, { data: profile }, { data: folderRows }, { data: events }] = await Promise.all([
+    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason, expires_at, expired_at, remind_after_days, remind_every_days, remind_max, folder_id, org_id').eq('id', id.data).maybeSingle(),
     supabase.from('envelope_documents').select('id, filename, page_count, size_bytes, sha256').eq('envelope_id', id.data).order('position'),
     supabase.from('recipients').select('id, name, email, role, status, is_sender, routing_order, decline_reason, auth_method').eq('envelope_id', id.data).order('routing_order').order('created_at'),
     supabase.from('fields').select('id, recipient_id, type, page, x, y, w, h, required').eq('envelope_id', id.data),
     supabase.from('profiles').select('display_name').eq('id', user.id).maybeSingle(),
+    supabase.from('folders').select('id, name, org_id').order('name'),
+    // the audit trail, read through the user's own session (row-level security)
+    supabase.from('audit_events').select('event_type, created_at, recipient_id').eq('envelope_id', id.data).order('chain_seq').limit(500),
   ]);
   if (!env) notFound(); // row-level security: someone else's document does not exist for this user
   const doc = docs?.[0];
@@ -230,6 +235,26 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
           </Button>
         </form>
       ) : null}
+      <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="history-heading">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <h2 id="history-heading" className="text-base font-medium text-ink">
+            Folder and history
+          </h2>
+          <MoveToFolderForm envelopeId={env.id as string} current={(env.folder_id as string | null) ?? null} folders={(folderRows ?? []).filter((f) => f.org_id === env.org_id).map((f) => ({ id: f.id as string, name: f.name as string }))} />
+        </div>
+        <ol className="mt-4 flex flex-col gap-2 border-l border-hairline pl-4 text-sm">
+          {buildTimeline((events ?? []) as { event_type: string; created_at: string; recipient_id: string | null }[], new Map(recipients.map((r) => [r.id, r.name]))).map((t, i) => (
+            <li key={i}>
+              <time dateTime={t.when} className="text-ink-muted">
+                {t.when.slice(0, 10)} {t.when.slice(11, 16)} UTC
+              </time>{' '}
+              <span className="text-ink">{t.what}</span>
+              {t.who ? <span className="text-ink-body"> · {t.who}</span> : null}
+            </li>
+          ))}
+        </ol>
+        <p className="mt-3 text-sm text-ink-muted">The complete, tamper-evident record (with internet addresses and devices) is in the certificate of the completed document.</p>
+      </section>
     </div>
   );
 }
