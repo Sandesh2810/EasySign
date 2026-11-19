@@ -149,6 +149,16 @@ async function main() {
     VARS.map(([name]) => `${name}=${next[name] ?? ''}`).join('\n') +
     '\n';
   writeFileSync(file, body, { mode: 0o600 });
+  if (only) {
+    // Say plainly, per item, what is now saved (never the value of a secret).
+    console.log('\nWhat is saved now:');
+    for (const name of only) {
+      const kind = VARS.find(([n]) => n === name)?.[2];
+      const v = next[name] ?? '';
+      const what = !v ? 'NOT SAVED (empty)' : kind === 'secret' ? `saved (${v.length} characters, hidden)` : `saved: ${v}`;
+      console.log(`  ${name.padEnd(20)} ${what}`);
+    }
+  }
   const missing = VARS.filter(([n, , k]) => !next[n] && k !== 'generated' && !n.includes('TURNSTILE')).map(([n]) => n);
   console.log(`\nSaved to app\\.env.local.` + (missing.length ? `\nStill empty: ${missing.join(', ')}` : '\nAll required values are present. You can close this window.'));
 }
