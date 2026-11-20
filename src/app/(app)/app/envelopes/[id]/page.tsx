@@ -27,6 +27,7 @@ import { DeleteForm, LegalHoldForm } from "./retention-panel";
 import { retentionWindow } from "@/lib/retention";
 import { loadAuditTrail } from "@/lib/audit-read";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { SaveAsTemplateForm } from "../../templates/template-forms";
 
 export const metadata: Metadata = { title: "Document" };
 
@@ -93,7 +94,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
       .order("created_at"),
     supabase
       .from("fields")
-      .select("id, recipient_id, type, page, x, y, w, h, required")
+      .select("id, recipient_id, type, page, x, y, w, h, required, locked")
       .eq("envelope_id", id.data),
     supabase
       .from("profiles")
@@ -194,6 +195,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     w: Number(f.w),
     h: Number(f.h),
     required: Boolean(f.required),
+    locked: Boolean(f.locked),
   }));
   const editable: EditableRecipient[] = recipients
     .filter((r) => r.role !== "in_person")
@@ -556,6 +558,20 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
             Delete this draft
           </Button>
         </form>
+      ) : null}
+      {doc && !viewOnly && !env.deleted_at && recipients.some((r) => ["signer", "approver", "cc", "in_person"].includes(r.role)) ? (
+        <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="template-heading">
+          <h2 id="template-heading" className="mb-3 text-base font-medium text-ink">
+            Save as template
+          </h2>
+          <SaveAsTemplateForm
+            envelopeId={env.id as string}
+            title={env.title as string}
+            people={recipients
+              .filter((r) => ["signer", "approver", "cc", "in_person"].includes(r.role))
+              .map((r) => ({ id: r.id, name: r.name, role: r.role }))}
+          />
+        </section>
       ) : null}
       <section
         className="rounded-lg bg-surface p-6 shadow-soft"

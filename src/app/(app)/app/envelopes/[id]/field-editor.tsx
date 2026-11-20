@@ -18,6 +18,8 @@ export interface EditorField {
   w: number;
   h: number;
   required: boolean;
+  /** fixed by the template it came from: cannot be moved, resized or removed (the database refuses it too, D-77) */
+  locked?: boolean;
 }
 
 interface PageInfo {
@@ -224,6 +226,7 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
     if (!canEdit) return;
     e.stopPropagation();
     setSelected(f.key);
+    if (f.locked) return; // fixed by the template: selectable, never dragged
     const pageEl = (e.currentTarget as HTMLElement).closest('[data-page]') as HTMLElement;
     const pr = pageEl.getBoundingClientRect();
     drag.current = { key: f.key, mode, startX: e.clientX, startY: e.clientY, orig: f, pageW: pr.width, pageH: pr.height, before: fields, moved: false };
@@ -250,6 +253,7 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
   // ---- keyboard ----
   const onFieldKey = (f: EditorField) => (e: React.KeyboardEvent) => {
     if (!canEdit) return;
+    if (f.locked && (e.key.startsWith('Arrow') || e.key === 'Delete' || e.key === 'Backspace')) return;
     const step = e.shiftKey ? 0.02 : 0.005;
     const move = (dx: number, dy: number) => {
       e.preventDefault();
@@ -274,7 +278,7 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
   const adjust = (f: EditorField, dx: number, dy: number, dw: number, dh: number) =>
     commit(fields.map((x) => (x.key === f.key ? { ...x, ...clampRect({ x: x.x + dx, y: x.y + dy, w: Math.min(x.w + dw, 1 - x.x), h: Math.min(x.h + dh, 1 - x.y) }) } : x)));
   const duplicate = (f: EditorField) => {
-    const copy: EditorField = { ...f, key: newKey(), ...clampRect({ ...f, x: f.x + 0.02, y: f.y + 0.02 }) };
+    const copy: EditorField = { ...f, key: newKey(), locked: false, ...clampRect({ ...f, x: f.x + 0.02, y: f.y + 0.02 }) };
     commit([...fields, copy]);
     setSelected(copy.key);
   };
@@ -347,7 +351,14 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
             <button type="button" onClick={redo} className="min-h-9 rounded-md border border-[#8a857d] px-3 text-sm text-[#1a1818]">
               Redo
             </button>
-            {sel ? (
+            {sel?.locked ? (
+              <>
+                <span className="text-sm text-[#373330]">This field is fixed by the template: it cannot be moved, resized, reassigned or removed.</span>
+                <button type="button" onClick={() => duplicate(sel)} className="min-h-9 rounded-md border border-[#8a857d] px-3 text-sm text-[#1a1818]">
+                  Duplicate
+                </button>
+              </>
+            ) : sel ? (
               <>
                 {signers.length > 1 ? (
                   <label className="flex items-center gap-1 text-sm text-[#373330]">
@@ -448,7 +459,8 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
                 .filter((f) => f.page === i + 1)
                 .map((f) => {
                   const isSel = f.key === selected;
-                  const visible = `${FIELD_LABEL[f.type]}${signers.length > 1 ? ` · ${signerName(f.recipientId)}` : ''}`;
+                  const visible = `${FIELD_LABEL[f.type]}${signers.length > 1 ? ` · ${signerName(f.recipientId)}` : ''}${f.locked ? ' · locked' : ''}`;
+                  const howTo = f.locked ? 'Fixed by the template: it cannot be moved or removed.' : 'Arrow keys or the Move buttons move it, Delete removes it.';
                   return (
                     <div
                       key={f.key}
@@ -456,16 +468,16 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
                       role="button"
                       tabIndex={0}
                       // Starts with the words shown on the box (WCAG 2.5.3, slice 9).
-                      aria-label={`${visible} field${signers.length > 1 ? '' : ` for ${signerName(f.recipientId)}`} on page ${f.page}. Arrow keys or the Move buttons move it, Delete removes it.`}
+                      aria-label={`${visible} field${signers.length > 1 ? '' : ` for ${signerName(f.recipientId)}`} on page ${f.page}. ${howTo}`}
                       aria-pressed={isSel}
                       onPointerDown={onPointerDown(f, 'move')}
                       onKeyDown={onFieldKey(f)}
                       onFocus={() => setSelected(f.key)}
                       className={`absolute flex items-center overflow-hidden border-2 border-dashed px-1 text-[11px] font-medium leading-tight text-[#1a1818] ${isSel ? 'outline outline-2 outline-offset-1 outline-[#1a1818]' : ''}`}
-                      style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%`, cursor: canEdit ? 'move' : 'default', touchAction: 'none', borderColor: toneOf(f.recipientId).border, backgroundColor: `${toneOf(f.recipientId).bg}${isSel ? 'dd' : '99'}` }}
+                      style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%`, cursor: canEdit && !f.locked ? 'move' : 'default', touchAction: 'none', borderColor: toneOf(f.recipientId).border, backgroundColor: `${toneOf(f.recipientId).bg}${isSel ? 'dd' : '99'}` }}
                     >
                       <span className="truncate">{visible}</span>
-                      {isSel && canEdit ? (
+                      {isSel && canEdit && !f.locked ? (
                         <span
                           onPointerDown={onPointerDown(f, 'resize')}
                           aria-hidden

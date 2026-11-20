@@ -102,10 +102,22 @@ async function prepare() {
       ...(withText ? [{ document_id: doc.id, recipient_id: r.id, type: 'text', page: 1, x: 0.12, y: 0.45 + i * 0.15, w: 0.4, h: 0.04, required: true }] : []),
     ]);
     await rpc(db, 'save_fields', { p_actor: sender.id, p_envelope_id: env.id, p_fields: fields });
-    return { id: env.id, recipients: saved };
+    return { id: env.id, recipients: saved, storagePath };
   };
 
   const draft = await makeEnvelope('Accessibility check (draft)', [SIGNER, { name: 'Bo Second', email: 'a11y-second@example.test' }]);
+  // a template to look at (Phase 4 slice 2); earlier runs' templates are removed first so the 100-per-workspace cap is never reached
+  const TEMPLATE_NAME = 'Accessibility check template';
+  const old = await db.rpc('template_list', { p_actor: sender.id, p_org: orgId });
+  for (const t of (old.data ?? []).filter((t) => t.name === TEMPLATE_NAME)) {
+    const { data: oldPath } = await db.rpc('template_delete', { p_actor: sender.id, p_template_id: t.id });
+    if (typeof oldPath === 'string') await db.storage.from('originals').remove([oldPath]);
+  }
+  const templateId = randomUUID();
+  const templatePath = `${orgId}/tpl-${templateId}/document.pdf`;
+  const copied = await db.storage.from('originals').copy(draft.storagePath, templatePath);
+  if (copied.error) throw new Error(`template file copy: ${copied.error.message}`);
+  await rpc(db, 'template_create', { p_actor: sender.id, p_template_id: templateId, p_envelope_id: draft.id, p_name: TEMPLATE_NAME, p_shared: true, p_labels: [], p_storage_path: templatePath });
   const sendWithLink = async (env) => {
     const tokenId = randomUUID();
     const nonce = newNonce();
@@ -121,7 +133,7 @@ async function prepare() {
   const token = await sendWithLink(sent);
   const keyboardOnly = await makeEnvelope('Accessibility check (keyboard only)', [{ name: 'Kim Keys', email: 'a11y-keys@example.test' }], true);
   const keyboardToken = await sendWithLink(keyboardOnly);
-  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken };
+  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId };
 }
 
 /** Press Tab until the focused element's name matches, then press the key. Fails if it is never reached. */
@@ -389,6 +401,8 @@ async function main() {
       ['Sender: settings', '/app/settings'],
       ['Sender: sign-in security', '/app/account/security'],
       ['Sender: team', '/app/team'],
+      ['Sender: templates', '/app/templates'],
+      ['Sender: a template (use and edit)', `/app/templates/${data.templateId}`],
     ];
     for (const [label, p] of senderPages) {
       await page.goto(`${APP}${p}`, { waitUntil: 'networkidle0' });

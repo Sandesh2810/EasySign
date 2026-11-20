@@ -50,6 +50,9 @@ async function AccountMenu() {
           </Button>
         </form>
       ) : null}
+      <Link href="/app/templates" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
+        Templates
+      </Link>
       <Link href="/app/team" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
         Team
       </Link>
