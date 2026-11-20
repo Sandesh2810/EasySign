@@ -264,3 +264,14 @@ export async function deleteDraftAction(formData: FormData): Promise<void> {
   }
   redirect('/app');
 }
+
+/** Marks a signer's request (a paper copy, or a withdrawn consent) as dealt with (Phase 3, AT3.3). */
+export async function completeTaskAction(envelopeId: string, taskId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const ids = z.object({ e: z.uuid(), t: z.uuid() }).safeParse({ e: envelopeId, t: taskId });
+  if (!ids.success) return { ok: false, message: 'That request was not understood. Reload the page and try again.' };
+  const { error } = await supabaseAdmin().rpc('complete_sender_task', { p_actor: user.id, p_task_id: ids.data.t });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath(`/app/envelopes/${ids.data.e}`);
+  return { ok: true, message: 'Marked as done.' };
+}

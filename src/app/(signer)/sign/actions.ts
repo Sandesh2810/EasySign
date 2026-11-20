@@ -6,9 +6,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import sharp from 'sharp';
 import { z } from 'zod';
-import { CONSENT_TEXT, CONSENT_VERSION, INTENT_TEXT } from '@/config/legal';
+import { CONSENT_VERSION, INTENT_TEXT } from '@/config/legal';
 import { allow, TOO_MANY } from '@/lib/rate-limit';
 import { friendlyDbError } from '@/lib/request-guard';
+import { consentOnFile } from '@/lib/signing/consent';
 import { loadSignerContext, requestEvidence } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getStorage } from '@/storage';
@@ -23,14 +24,56 @@ export async function consentAction(_prev: SignResult | null, formData: FormData
   if (!ctx) return { ok: false, message: EXPIRED };
   if (formData.get('agree') !== 'on') return { ok: false, message: 'Tick the box to agree, or close this page to sign on paper instead.' };
   const { ip, ua } = await requestEvidence();
+  let disclosureSha: string;
+  try {
+    disclosureSha = await consentOnFile();
+  } catch {
+    return { ok: false, message: 'Your agreement could not be recorded just now. Nothing was changed. Try again in a minute.' };
+  }
   const { error } = await supabaseAdmin().rpc('signer_consent', {
     p_token_id: ctx.tokenId,
     p_version: CONSENT_VERSION,
-    p_disclosure_sha256: sha256Hex(CONSENT_TEXT),
+    p_disclosure_sha256: disclosureSha,
     p_ip: ip,
     p_user_agent: ua,
   });
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath('/sign');
+  return { ok: true };
+}
+
+/** Withdraw consent (AT3.3): clears what was filled in, blocks signing until the signer agrees again, tells the sender. */
+export async function withdrawConsentAction(reason: string, wantPaper: boolean): Promise<SignResult> {
+  const ctx = await loadSignerContext();
+  if (!ctx) return { ok: false, message: EXPIRED };
+  if (!(await allow({ bucket: 'sign_withdraw', limit: 10, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  const text = z.string().max(500).safeParse(reason ?? '');
+  if (!text.success) return { ok: false, message: 'Keep the reason under 500 characters.' };
+  const { ip, ua } = await requestEvidence();
+  const { data, error } = await supabaseAdmin().rpc('signer_withdraw_consent', {
+    p_token_id: ctx.tokenId,
+    p_reason: text.data,
+    p_want_paper: wantPaper === true,
+    p_ip: ip,
+    p_user_agent: ua,
+  });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (data === 'limited') return { ok: false, message: TOO_MANY };
+  revalidatePath('/sign');
+  return { ok: true };
+}
+
+/** Ask the sender for a paper copy (AT3.3): creates a task for the sender and tells them. */
+export async function requestPaperCopyAction(note: string): Promise<SignResult> {
+  const ctx = await loadSignerContext();
+  if (!ctx) return { ok: false, message: EXPIRED };
+  if (!(await allow({ bucket: 'sign_paper', limit: 10, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  const text = z.string().max(500).safeParse(note ?? '');
+  if (!text.success) return { ok: false, message: 'Keep the note under 500 characters.' };
+  const { ip, ua } = await requestEvidence();
+  const { data, error } = await supabaseAdmin().rpc('signer_request_paper_copy', { p_token_id: ctx.tokenId, p_note: text.data, p_ip: ip, p_user_agent: ua });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (data === 'limited') return { ok: false, message: TOO_MANY };
   revalidatePath('/sign');
   return { ok: true };
 }

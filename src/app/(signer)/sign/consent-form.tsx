@@ -3,7 +3,7 @@ import { useActionState } from 'react';
 import { Button, Notice } from '@/components/ui';
 import { consentAction, type SignResult } from './actions';
 
-export function ConsentForm({ signerName }: { signerName: string }) {
+export function ConsentForm({ signerName, paperRequested = false }: { signerName: string; paperRequested?: boolean }) {
   const [state, action, pending] = useActionState<SignResult | null, FormData>(consentAction, null);
   return (
     <form action={action} className="mt-6 flex flex-col gap-4 border-t border-hairline pt-6">
@@ -17,7 +17,7 @@ export function ConsentForm({ signerName }: { signerName: string }) {
           {pending ? 'One moment…' : 'Agree and continue'}
         </Button>
       </div>
-      <p className="text-sm text-ink-muted">Do not want to sign electronically? Close this page and ask the sender for a paper copy.</p>
+      {paperRequested ? null : <p className="text-sm text-ink-muted">Do not want to sign electronically? Use &quot;Ask for a paper copy&quot; below.</p>}
     </form>
   );
 }

@@ -19,6 +19,8 @@ const EMAIL_LABEL: Record<string, string> = {
   declined_sender: 'the notice that it was declined',
   voided_notice: 'the notice that it was cancelled',
   expired_sender: 'the notice that it expired',
+  paper_copy_sender: 'the notice about a paper-copy request',
+  withdrawn_sender: 'the notice that consent was withdrawn',
   digest: 'your daily summary',
 };
 
@@ -42,6 +44,14 @@ export function describeNotification(kind: string, payload: unknown): NoticeView
       return { text: `${title} is complete. Everyone has finished and the sealed copy is ready to download.`, path, tone: 'good' };
     case 'envelope_declined':
       return { text: `${by} declined ${title}. The document is closed and nobody else can sign it.`, path, tone: 'attention' };
+    case 'consent_withdrawn':
+      return {
+        text: `${by} withdrew their consent to sign ${title} electronically. What they had filled in was cleared and they cannot sign until they agree again. Open the document to decide what to do.`,
+        path,
+        tone: 'attention',
+      };
+    case 'paper_copy_requested':
+      return { text: `${by} asked for a paper copy of ${title}. Open the document to see the request and mark it done when you have sent it.`, path, tone: 'attention' };
     case 'envelope_expired':
       return { text: `${title} expired before everyone had finished. Its signing links no longer work.`, path, tone: 'attention' };
     case 'sealing_failed':

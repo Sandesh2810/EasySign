@@ -8,6 +8,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { deriveToken, hashToken, newNonce } from '@/lib/signer-token';
+import { CONSENT_TEXT, CONSENT_VERSION } from '@/config/legal';
 
 if (existsSync('.env.local')) process.loadEnvFile('.env.local');
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -42,6 +43,8 @@ const fileStatus = async (cookie: string) => (await fetch(`${APP}/api/sign/docum
 const statusOf = async (id: string) => (await db.from('recipients').select('status, email').eq('id', id).single()).data;
 
 beforeAll(async () => {
+  // slice 3: a consent must name a wording on file
+  await createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, { auth: { persistSession: false } }).rpc('register_consent_version', { p_version: CONSENT_VERSION, p_body: CONSENT_TEXT });
   if (!SUPABASE_URL || !SECRET || !TOKEN_KEY) throw new Error('Settings are missing. Run "npm run setup:env" (or double-click Enter-Supabase-Key.cmd).');
   const alive = await fetch(`${APP}/login`).then((r) => r.ok).catch(() => false);
   if (!alive) throw new Error(`The app is not running at ${APP}. Start it first (npm run dev, or double-click Start-YouNMeSign.cmd), then run this again.`);
@@ -108,7 +111,7 @@ describe('correct and void, through the running app', () => {
   });
 
   it('AT2.3: after the second person\'s email is corrected, their old link and old session are dead and the new link works; the first person is untouched', async () => {
-    await rpc('signer_consent', { p_token_id: two.tokenId, p_version: 'test', p_disclosure_sha256: sha('test'), p_ip: null, p_user_agent: 'api-test' });
+    await rpc('signer_consent', { p_token_id: two.tokenId, p_version: CONSENT_VERSION, p_disclosure_sha256: sha(CONSENT_TEXT), p_ip: null, p_user_agent: 'api-test' });
     const fresh = mint();
     two.newToken = fresh.token;
     const result = await rpc<string>('correct_recipient', {
@@ -147,7 +150,7 @@ describe('correct and void, through the running app', () => {
       db.rpc('void_envelope', { p_actor: senderId, p_envelope_id: envelopeId, p_reason: null }),
       db.rpc('correct_recipient', { p_actor: senderId, p_envelope_id: envelopeId, p_recipient_id: one.id, p_name: 'X', p_email: 'x@example.test', p_token: mint().record }),
       db.rpc('resend_request', { p_actor: senderId, p_envelope_id: envelopeId, p_recipient_id: one.id }),
-      db.rpc('signer_consent', { p_token_id: one.tokenId, p_version: 'test', p_disclosure_sha256: sha('test'), p_ip: null, p_user_agent: 'api-test' }),
+      db.rpc('signer_consent', { p_token_id: one.tokenId, p_version: CONSENT_VERSION, p_disclosure_sha256: sha(CONSENT_TEXT), p_ip: null, p_user_agent: 'api-test' }),
       db.from('envelopes').update({ status: 'sent' }).eq('id', envelopeId).select('id'),
     ]) {
       const { error } = await call;

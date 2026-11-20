@@ -12,6 +12,11 @@ describe('document history', () => {
     expect(t[0].who).toBeNull();
   });
 
+  it('names the consent and paper-copy steps (AT3.3)', () => {
+    const t = buildTimeline([ev('consent_withdrawn', 'r1'), ev('paper_copy_requested', 'r1'), ev('sender_task_done', 'r1')], names);
+    expect(t.map((x) => x.what)).toEqual(['Withdrew consent to sign electronically', 'Asked for a paper copy', 'Request marked as done']);
+  });
+
   it('leaves out bookkeeping steps unless asked, and never shows a raw code for an unknown step', () => {
     expect(buildTimeline([ev('email_queued'), ev('fields_changed'), ev('email_sent')], names).map((x) => x.what)).toEqual(['Email sent']);
     expect(buildTimeline([ev('email_queued')], names, { all: true })).toHaveLength(1);

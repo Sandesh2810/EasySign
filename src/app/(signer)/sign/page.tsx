@@ -7,7 +7,9 @@ import { lockedMessage } from '@/lib/signing/gate-text';
 import { loadSignerContext } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ConsentForm } from './consent-form';
+import { Notice } from '@/components/ui';
 import { DeclineControl } from './decline';
+import { PaperCopyControl } from './paper-withdraw';
 import { Finalising } from './finalising';
 import { AccessCodeForm, EmailCodeForm } from './gate-form';
 import { SigningRoom, type RoomField } from './signing-room';
@@ -124,19 +126,36 @@ async function Sign() {
     return <SigningRoom mode="view" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText="" />;
   }
   if (recipient.status === 'sent' || recipient.status === 'viewed') {
+    const [{ data: lastWithdrawn }, { data: openPaper }] = await Promise.all([
+      admin.from('consents').select('withdrawn_at').eq('recipient_id', recipient.id).not('withdrawn_at', 'is', null).order('withdrawn_at', { ascending: false }).limit(1).maybeSingle(),
+      admin.from('sender_tasks').select('created_at').eq('recipient_id', recipient.id).eq('kind', 'paper_copy').is('done_at', null).maybeSingle(),
+    ]);
     return (
       <div className="mx-auto max-w-2xl px-4 py-10">
         <p className="text-sm text-ink-muted">{senderLine}</p>
         <h1 className="mt-1 text-2xl font-medium text-ink">{envelope.title}</h1>
+        {lastWithdrawn?.withdrawn_at ? (
+          <div className="mt-6">
+            <Notice tone="info">
+              You withdrew your consent to sign electronically. The sender has been told. If you change your mind, you can agree again below and start over.
+            </Notice>
+          </div>
+        ) : null}
+        {openPaper ? (
+          <div className="mt-4">
+            <Notice tone="info">You asked for a paper copy. The sender has been told.</Notice>
+          </div>
+        ) : null}
         <h2 className="mt-8 text-lg font-medium text-ink">Before you start: {recipient.role === 'approver' ? 'approving' : 'signing'} electronically</h2>
         <div className="mt-3 flex flex-col gap-3 text-base text-ink-body">
           {CONSENT_PARAGRAPHS.map((p) => (
             <p key={p}>{p}</p>
           ))}
         </div>
-        <ConsentForm signerName={recipient.name} />
+        <ConsentForm signerName={recipient.name} paperRequested={Boolean(openPaper)} />
         {/* a div, not a paragraph: the control carries its own dialog, which may not sit inside a <p> */}
-        <div className="mt-6">
+        <div className="mt-6 flex flex-wrap gap-2">
+          {openPaper ? null : <PaperCopyControl variant="quiet" />}
           <DeclineControl variant="quiet" label="Decline this document instead" />
         </div>
       </div>

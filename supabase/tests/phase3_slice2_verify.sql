@@ -12,6 +12,7 @@ declare
   today text := to_char((now() at time zone 'utc')::date, 'YYYY-MM-DD');
   job record; ok boolean; r jsonb; r2 jsonb; n int; cnt int; i int; st text; t text; keys text[];
 begin
+  perform public.register_consent_version('v1', 'Test consent wording');   -- slice 3: consents must name a wording on file
   insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
   values (a, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 's12-sender@example.test', now(), '{"provider":"email"}', '{"full_name":"Sid Sender"}', now(), now());
   select m.org_id into org_a from public.memberships m where m.user_id = a and m.role = 'owner';
@@ -27,7 +28,7 @@ begin
   perform public.save_fields(a, e1, jsonb_build_array(jsonb_build_object('document_id', d1, 'recipient_id', s1, 'type', 'signature', 'page', 1, 'x', 0.1, 'y', 0.3, 'w', 0.3, 'h', 0.07)));
   perform public.send_envelope(a, e1, jsonb_build_array(jsonb_build_object('recipient_id', s1, 'token_id', t1, 'nonce', repeat('71', 16), 'token_sha256', h1)), exp, 'link');
   perform public.signer_open(h1, null, 'ua');
-  perform public.signer_consent(t1, 'v1', repeat('c1', 32), null, 'ua');
+  perform public.signer_consent(t1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, 'ua');
   perform public.signer_adopt_signature(t1, 'signature', 'drawn', 'supabase', org_a || '/' || e1 || '/sig.png', repeat('5a', 32), null, null, null, 'ua');
   st := public.signer_complete(t1, repeat('d1', 32), today, null, 'ua');
   select * into job from public.claim_seal_job(300);

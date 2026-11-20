@@ -8,7 +8,7 @@ import { hashOtp, otpForOutboxRow } from '@/lib/signer-token';
 import { byteaToBuffer, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
-import { completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, otpTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
+import { completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, otpTemplate, senderTaskTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
 import { drainOutbox, type OutboxDeps, type OutboxRow, type Prepared } from './dispatch';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -116,6 +116,27 @@ async function prepare(row: OutboxRow): Promise<Prepared> {
         title: envelope.title as string,
         declinedBy: (decliner?.name as string | undefined) ?? 'A recipient',
         reason: (decliner?.decline_reason as string | null | undefined) ?? null,
+        openUrl: `${env.appUrl()}/app/envelopes/${envelope.id}`,
+      }),
+    };
+  }
+
+  if (row.kind === 'paper_copy_sender' || row.kind === 'withdrawn_sender') {
+    const taskId = typeof row.payload?.task_id === 'string' ? row.payload.task_id : '';
+    const [to, { data: task }, { data: who }] = await Promise.all([
+      userEmail((row.to_user_id ?? envelope.sender_id) as string),
+      db.from('sender_tasks').select('kind, note').eq('id', taskId).eq('envelope_id', envelope.id).maybeSingle(),
+      row.recipient_id ? db.from('recipients').select('name').eq('id', row.recipient_id).maybeSingle() : Promise.resolve({ data: null }),
+    ]);
+    if (!task) throw new Error('task not found');
+    return {
+      to: to.email,
+      email: senderTaskTemplate({
+        name: to.name,
+        title: envelope.title as string,
+        by: (who?.name as string | undefined) ?? 'A recipient',
+        kind: task.kind as 'paper_copy' | 'consent_withdrawn',
+        note: (task.note as string | null) ?? null,
         openUrl: `${env.appUrl()}/app/envelopes/${envelope.id}`,
       }),
     };

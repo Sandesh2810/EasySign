@@ -268,3 +268,23 @@ export function completionTemplate(v: { name: string; title: string; code: strin
     ].join('\n'),
   };
 }
+
+/** To the sender: a signer asked for a paper copy, or withdrew consent to sign electronically (Phase 3, AT3.3). */
+export function senderTaskTemplate(v: { name: string; title: string; by: string; kind: 'paper_copy' | 'consent_withdrawn'; note: string | null; openUrl: string }): RenderedEmail {
+  const paper = v.kind === 'paper_copy';
+  const subject = oneLine(paper ? `Paper copy requested: "${v.title}"` : `Consent withdrawn: "${v.title}"`);
+  const what = paper
+    ? `${v.by} asked for a paper copy of "${v.title}". Please arrange one; how you provide it is up to you. When it is done, mark the request as done on the document page.`
+    : `${v.by} withdrew their consent to sign "${v.title}" electronically. What they had filled in or signed was cleared, and they cannot sign until they agree again. The document stays open: you can send them a paper copy, correct the recipient or cancel the document.`;
+  const note = v.note ? `${paper ? 'Their note' : 'Their reason'}: “${v.note}”` : null;
+  return {
+    subject,
+    html: layout({
+      preheader: paper ? `${v.by} asked for a paper copy.` : `${v.by} withdrew consent to sign electronically.`,
+      heading: paper ? 'A paper copy was requested' : 'Consent to sign electronically was withdrawn',
+      paragraphs: [`Hello ${esc(v.name)},`, esc(what), ...(note ? [esc(note)] : [])],
+      button: { label: 'Open the document', url: v.openUrl },
+    }),
+    text: [`Hello ${v.name},`, '', what, ...(note ? [note] : []), '', v.openUrl].join('\n'),
+  };
+}

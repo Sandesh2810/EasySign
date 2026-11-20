@@ -20,6 +20,8 @@ declare
   e12 uuid;
   d_today text := to_char((now() at time zone 'UTC')::date, 'YYYY-MM-DD');
 begin
+  perform public.register_consent_version('esign-consent-v1', 'Test consent wording');   -- slice 3: consents must name a wording on file
+  perform public.register_consent_version('v1', 'Test consent wording');   -- slice 3: consents must name a wording on file
   -- ---------- setup as the migration role ----------
   insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
   values (a, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'rls-a@example.test', now(), '{"provider":"email"}', '{"full_name":"Alice Test"}', now(), now()),
@@ -332,8 +334,8 @@ begin
       res := res || E'FAIL T59 field filled before consent\n';
     exception when insufficient_privilege then res := res || E'PASS T59 nothing can be filled in before consent is given\n'; end;
 
-    perform public.signer_consent(tok, 'esign-consent-v1', repeat('c1', 32), '203.0.113.9', 'ua');
-    perform public.signer_consent(tok, 'esign-consent-v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(tok, 'esign-consent-v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
+    perform public.signer_consent(tok, 'esign-consent-v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     select count(*) into cnt from public.consents c where c.recipient_id = r4;
     if cnt = 1 and (select x.status from public.recipients x where x.id = r4) = 'consented'
     then res := res || E'PASS T60 consent is recorded once with its version hash, IP and browser\n'; else res := res || E'FAIL T60 consent\n'; end if;
@@ -493,7 +495,7 @@ begin
 
     select * into row5 from public.signer_open(h_s1, '203.0.113.9', 'ua');
     n := 0;
-    begin perform public.signer_consent(t_s1, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_consent(t_s1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.signer_complete(t_s1, repeat('d1', 32), d_today, null, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.signer_decline(t_s1, 'no', null, null); n := n + 1; exception when insufficient_privilege then null; end;
     if row5.turn = 'waiting' and n = 0 and (select x.status from public.recipients x where x.id = s1) = 'created'
@@ -503,7 +505,7 @@ begin
     else res := res || 'FAIL T85 out of turn :: turn=' || coalesce(row5.turn, 'null') || ' n=' || n || E'\n'; end if;
 
     select * into row5 from public.signer_open(h_boss, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_boss, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_boss, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     n := 0;
     begin perform public.signer_complete(t_boss, repeat('d1', 32), d_today, null, null); n := n + 1; exception when insufficient_privilege then null; end;
     st := public.signer_approve(t_boss, '203.0.113.9', 'ua');
@@ -519,10 +521,10 @@ begin
 
     select * into row5 from public.signer_open(h_vw, '203.0.113.9', 'ua');
     n := 0;
-    begin perform public.signer_consent(t_vw, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_consent(t_vw, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.signer_approve(t_s2, null, null); n := n + 1; exception when insufficient_privilege then null; end; -- a signer cannot "approve"
     perform public.signer_open(h_s2, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_s2, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_s2, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_s2, 'signature', 'drawn', 'supabase', org_a || '/' || e5 || '/sig-s2.png', repeat('5b', 32), null, null, '203.0.113.9', 'ua');
     st := public.signer_complete(t_s2, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
     if row5.turn = 'view' and n = 0 and st = 'waiting' and (select x.status from public.recipients x where x.id = vw) = 'viewed'
@@ -530,7 +532,7 @@ begin
        and not exists (select 1 from public.seal_jobs j where j.envelope_id = e5)
     then
       perform public.signer_open(h_s1, '203.0.113.9', 'ua');
-      perform public.signer_consent(t_s1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+      perform public.signer_consent(t_s1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
       perform public.signer_adopt_signature(t_s1, 'signature', 'typed', 'supabase', org_a || '/' || e5 || '/sig-s1.png', repeat('5c', 32), 'S One', 'browser-script', '203.0.113.9', 'ua');
       st := public.signer_complete(t_s1, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
       if st = 'waiting' and (select x.status from public.recipients x where x.id = s3) = 'sent'
@@ -542,7 +544,7 @@ begin
     else res := res || 'FAIL T87 first half :: turn=' || coalesce(row5.turn, 'null') || ' st=' || coalesce(st, 'null') || ' n=' || n || E'\n'; end if;
 
     perform public.signer_open(h_s3, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_s3, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_s3, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_s3, 'signature', 'drawn', 'supabase', org_a || '/' || e5 || '/sig-s3.png', repeat('5d', 32), null, null, '203.0.113.9', 'ua');
     st := public.signer_complete(t_s3, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
     select count(*) into cnt from public.seal_jobs j where j.envelope_id = e5 and j.status = 'queued';
@@ -570,7 +572,7 @@ begin
     perform public.signer_decline(t_x1, '  Wrong price  ', '203.0.113.9', 'ua');
     select count(*) into cnt from public.signer_open(h_x2, '203.0.113.9', 'ua');
     n := 0;
-    begin perform public.signer_consent(t_x1, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_consent(t_x1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.signer_decline(t_x2, null, null, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.reveal_signing_links(a, e6); n := n + 1; exception when insufficient_privilege then null; end;
     if cnt = 0 and n = 0 and (select e.status from public.envelopes e where e.id = e6) = 'declined'
@@ -617,7 +619,7 @@ begin
       jsonb_build_object('recipient_id', v2, 'token_id', t_v2, 'nonce', repeat('12', 16), 'token_sha256', h_v2),
       jsonb_build_object('recipient_id', v3, 'token_id', t_v3, 'nonce', repeat('13', 16), 'token_sha256', h_v3)), exp, 'email');
     perform public.signer_open(h_v1, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_v1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_v1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_v1, 'signature', 'drawn', 'supabase', org_a || '/' || e7 || '/sig-v1.png', repeat('6a', 32), null, null, '203.0.113.9', 'ua');
     perform public.signer_complete(t_v1, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
 
@@ -643,7 +645,7 @@ begin
     begin perform public.void_envelope(a, e7, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.void_envelope(a, e5, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.void_envelope(a, e6, null); n := n + 1; exception when insufficient_privilege then null; end;
-    begin perform public.signer_consent(t_v2, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_consent(t_v2, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.resend_request(a, e7, v2); n := n + 1; exception when insufficient_privilege then null; end;
     begin perform public.correct_recipient(a, e7, v2, 'New', 'new@example.test', null); n := n + 1; exception when insufficient_privilege then null; end;
     begin update public.envelopes set status = 'sent' where id = e7; n := n + 1; exception when insufficient_privilege then null; end;
@@ -668,11 +670,11 @@ begin
       jsonb_build_object('recipient_id', c2, 'token_id', t_c2, 'nonce', repeat('15', 16), 'token_sha256', h_c2),
       jsonb_build_object('recipient_id', c3, 'token_id', t_c3, 'nonce', repeat('16', 16), 'token_sha256', h_c3)), exp, 'email');
     perform public.signer_open(h_c1, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_c1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_c1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_c1, 'signature', 'drawn', 'supabase', org_a || '/' || e8 || '/sig-c1.png', repeat('6b', 32), null, null, '203.0.113.9', 'ua');
     perform public.signer_complete(t_c1, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
     perform public.signer_open(h_c2, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_c2, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_c2, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_c2, 'signature', 'drawn', 'supabase', org_a || '/' || e8 || '/sig-c2-old.png', repeat('6c', 32), null, null, '203.0.113.9', 'ua');
     newtok := jsonb_build_object('token_id', t_c2new, 'nonce', repeat('17', 16), 'token_sha256', h_c2new);
 
@@ -706,7 +708,7 @@ begin
     then res := res || E'PASS T93 AT2.3: correcting an email revokes the old link, issues a new one, undoes what the old address had started, re-sends the request, records it, and leaves everyone else untouched\n';
     else res := res || 'FAIL T93 correct :: n=' || n || ' st=' || coalesce(st, 'null') || ' old=' || cnt || ' turn=' || coalesce(row7.turn, 'null') || E'\n'; end if;
 
-    perform public.signer_consent(t_c2new, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_c2new, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_c2new, 'signature', 'drawn', 'supabase', org_a || '/' || e8 || '/sig-c2-new.png', repeat('6d', 32), null, null, '203.0.113.9', 'ua');
     st := public.signer_complete(t_c2new, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
     st2 := public.correct_recipient(a, e8, c3, 'C Three Renamed', 'c3@example.test', null);
@@ -771,7 +773,7 @@ begin
       jsonb_build_object('recipient_id', q2, 'token_id', t_q2, 'nonce', repeat('22', 16), 'token_sha256', h_q2)), exp, 'email');
     begin perform public.set_reminders(a, e10, 1, 1, 5); n := n + 1; exception when insufficient_privilege then null; end; -- not after sending
     perform public.signer_open(h_q1, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_q1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_q1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_q1, 'signature', 'drawn', 'supabase', org_a || '/' || e10 || '/sig-q1.png', repeat('6e', 32), null, null, '203.0.113.9', 'ua');
     perform public.signer_complete(t_q1, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
 
@@ -811,7 +813,7 @@ begin
     select count(*) into cnt from public.signer_open(h_q2, '203.0.113.9', 'ua');
     n := 0;
     begin perform public.void_envelope(a, e10, null); n := n + 1; exception when insufficient_privilege then null; end;
-    begin perform public.signer_consent(t_q2, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+    begin perform public.signer_consent(t_q2, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, null); n := n + 1; exception when insufficient_privilege then null; end;
     begin update public.envelopes set status = 'sent' where id = e10; n := n + 1; exception when insufficient_privilege then null; end;
     if cnt = 0 and n = 0
        and (select e.status || '|' || (e.expired_at is not null)::text from public.envelopes e where e.id = e10) = 'expired|true'
@@ -921,15 +923,15 @@ begin
 
     -- T107: in-app progress notices for the sender (signed, approved), but not for the sender's own signature
     perform public.signer_open(h_boss, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_boss, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_boss, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_approve(t_boss, '203.0.113.9', 'ua');
     perform public.signer_open(h_sg, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_sg, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_sg, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_sg, 'signature', 'drawn', 'supabase', org_a || '/' || e11 || '/sig-sg.png', repeat('7a', 32), null, null, '203.0.113.9', 'ua');
     perform public.signer_complete(t_sg, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
     select count(*) into cnt from public.notifications q where q.user_id = a and q.payload ->> 'envelope_id' = e11::text and q.kind in ('recipient_signed', 'recipient_approved');
     perform public.signer_open(h_me, '203.0.113.9', 'ua');
-    perform public.signer_consent(t_me, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+    perform public.signer_consent(t_me, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
     perform public.signer_adopt_signature(t_me, 'signature', 'drawn', 'supabase', org_a || '/' || e11 || '/sig-me.png', repeat('7b', 32), null, null, '203.0.113.9', 'ua');
     perform public.signer_complete(t_me, repeat('d1', 32), d_today, '203.0.113.9', 'ua');
     if cnt = 2

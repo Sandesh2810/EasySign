@@ -2,6 +2,8 @@
 // Step 3 on the document page: send the document, then (while it is open) fetch the signing link on request.
 import { useActionState, useState, useTransition } from 'react';
 import { Button, Notice } from '@/components/ui';
+import { PRODUCT_NAME } from '@/config/brand';
+import { EXCLUDED_DOCUMENTS } from '@/config/legal';
 import { progressLabel, ROLE_LABEL } from '@/lib/recipient-labels';
 import type { RecipientStatus, Role } from '@/lib/routing';
 import { getSigningLinkAction, sendEnvelopeAction, type ActionResult, type RevealedLink } from '../actions';
@@ -18,6 +20,16 @@ export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: str
           ? 'You are the signer. Nothing is emailed: you sign straight away in this browser.'
           : 'Once sent, the document, the people and the fields are locked and cannot be edited. Each person is asked when their turn comes.'}
       </p>
+      <details className="rounded-md bg-surface-sand px-4 py-2 text-sm text-ink-body">
+        <summary className="min-h-11 cursor-pointer py-2.5 font-medium text-ink">Documents you should not send for electronic signature</summary>
+        <p className="mt-1">The law treats some documents differently, and an electronic signature may not be valid for them. Do not use {PRODUCT_NAME} for:</p>
+        <ul className="mt-2 list-disc pl-5">
+          {EXCLUDED_DOCUMENTS.map((d) => (
+            <li key={d}>{d}</li>
+          ))}
+        </ul>
+        <p className="mt-2 pb-2">The rules differ between countries and states. If you are unsure, ask a lawyer before sending.</p>
+      </details>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <label htmlFor="send-expires" className="text-sm font-medium text-ink">

@@ -9,6 +9,7 @@ declare
   t1 uuid := gen_random_uuid(); h1 text := repeat('b7', 32);
   n int; cnt int; st text; job record; r record; t0 timestamptz; ms numeric; worst numeric := 0; i int; q text;
 begin
+  perform public.register_consent_version('v1', 'Test consent wording');   -- slice 3: consents must name a wording on file
   insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
   values (a, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 's10-a@example.test', now(), '{"provider":"email"}', '{"full_name":"Ann Alpha"}', now(), now()),
          (b, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 's10-b@example.test', now(), '{"provider":"email"}', '{"full_name":"Bob Beta"}', now(), now());
@@ -41,7 +42,7 @@ begin
   -- T302 AT2.8: completing a document files it by the rule; others keep their folder
   perform public.send_envelope(a, e1, jsonb_build_array(jsonb_build_object('recipient_id', s1, 'token_id', t1, 'nonce', repeat('61', 16), 'token_sha256', h1)), now() + interval '30 days', 'link');
   perform public.signer_open(h1, null, 'ua');
-  perform public.signer_consent(t1, 'v1', repeat('c1', 32), null, 'ua');
+  perform public.signer_consent(t1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, 'ua');
   perform public.signer_adopt_signature(t1, 'signature', 'drawn', 'supabase', org_a || '/' || e1 || '/sig.png', repeat('8a', 32), null, null, null, 'ua');
   perform public.signer_complete(t1, repeat('d1', 32), to_char((now() at time zone 'UTC')::date, 'YYYY-MM-DD'), null, 'ua');
   for i in 1..30 loop

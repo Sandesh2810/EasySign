@@ -7,6 +7,7 @@ import { Button, Notice } from '@/components/ui';
 import { FIELD_LABEL, type FieldType } from '@/lib/fields';
 import { approveAction, completeAction, fillFieldAction } from './actions';
 import { DeclineControl } from './decline';
+import { PaperCopyControl, WithdrawControl } from './paper-withdraw';
 import { SignatureDialog } from './signature-dialog';
 
 export interface RoomField {
@@ -225,6 +226,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
             <p className="text-sm text-ink-body">For your information. Nothing is needed from you.</p>
           ) : mode === 'approve' ? (
             <div className="flex flex-wrap items-center gap-2">
+              <PaperCopyControl className="px-2" />
+              <WithdrawControl className="px-2" />
               <DeclineControl />
               <Button type="button" onClick={openConfirm}>
                 Approve
@@ -235,6 +238,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
               <p role="status" className="text-sm text-ink-body">
                 {doneCount} of {required.length} done
               </p>
+              <PaperCopyControl className="px-2" />
+              <WithdrawControl className="px-2" />
               <DeclineControl variant="quiet" className="px-2" />
               {remaining.length > 0 ? (
                 <Button type="button" onClick={() => goNext()}>

@@ -18,6 +18,7 @@ import { FieldEditor, type EditorField } from './field-editor';
 import { PersonActions, VoidPanel } from './open-actions';
 import { RecipientsEditor, type EditableRecipient } from './recipients-editor';
 import { SendPanel, SigningLinkPanel } from './send-panel';
+import { SenderTasks, type TaskView } from './sender-tasks';
 
 export const metadata: Metadata = { title: 'Document' };
 
@@ -48,7 +49,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
   if (!id.success) notFound();
 
   const supabase = await createSupabaseServerClient();
-  const [{ data: env }, { data: docs }, { data: recipientRows }, { data: fields }, { data: profile }, { data: folderRows }, { data: events }] = await Promise.all([
+  const [{ data: env }, { data: docs }, { data: recipientRows }, { data: fields }, { data: profile }, { data: folderRows }, { data: events }, { data: taskRows }] = await Promise.all([
     supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason, expires_at, expired_at, remind_after_days, remind_every_days, remind_max, folder_id, org_id').eq('id', id.data).maybeSingle(),
     supabase.from('envelope_documents').select('id, filename, page_count, size_bytes, sha256').eq('envelope_id', id.data).order('position'),
     supabase.from('recipients').select('id, name, email, role, status, is_sender, routing_order, decline_reason, auth_method').eq('envelope_id', id.data).order('routing_order').order('created_at'),
@@ -57,6 +58,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     supabase.from('folders').select('id, name, org_id').order('name'),
     // the audit trail, read through the user's own session (row-level security)
     supabase.from('audit_events').select('event_type, created_at, recipient_id').eq('envelope_id', id.data).order('chain_seq').limit(500),
+    supabase.from('sender_tasks').select('id, kind, note, created_at, recipient_id').eq('envelope_id', id.data).is('done_at', null).order('created_at'),
   ]);
   if (!env) notFound(); // row-level security: someone else's document does not exist for this user
   const doc = docs?.[0];
@@ -66,6 +68,8 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
   const isOpen = env.status === 'sent' || env.status === 'in_progress';
   const selfSign = isDraft ? recipients.length === 1 && recipients[0].is_sender && recipients[0].role === 'signer' : Boolean(env.self_sign);
   const decliner = recipients.find((r) => r.status === 'declined');
+  const nameOf = new Map(recipients.map((r) => [r.id, r.name]));
+  const tasks: TaskView[] = (taskRows ?? []).map((t) => ({ id: t.id as string, kind: t.kind as TaskView['kind'], who: nameOf.get(t.recipient_id as string) ?? 'A recipient', note: (t.note as string | null) ?? null, createdAt: t.created_at as string }));
   const initialFields: EditorField[] = (fields ?? []).map((f) => ({
     key: f.id as string,
     recipientId: f.recipient_id as string,
@@ -113,6 +117,13 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
         <Notice tone="danger">
           You cancelled this document. {env.void_reason ? `Your reason: “${env.void_reason}”` : 'No reason was recorded.'} Every signing link is switched off and nothing was completed. To try again, create a new document.
         </Notice>
+      ) : null}
+
+      {tasks.length > 0 ? (
+        <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="tasks-heading">
+          <h2 id="tasks-heading" className="mb-3 text-base font-medium text-ink">Needs your attention</h2>
+          <SenderTasks envelopeId={env.id} tasks={tasks} />
+        </section>
       ) : null}
 
       <section className="rounded-lg bg-surface p-6 shadow-soft">

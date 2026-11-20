@@ -11,6 +11,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { deriveToken, hashToken, newNonce } from '@/lib/signer-token';
+import { CONSENT_TEXT, CONSENT_VERSION } from '@/config/legal';
 
 if (existsSync('.env.local')) process.loadEnvFile('.env.local');
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -51,6 +52,8 @@ const auditCount = async (type: string, recipientId?: string) => {
 };
 
 beforeAll(async () => {
+  // slice 3: a consent must name a wording on file
+  await createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, { auth: { persistSession: false } }).rpc('register_consent_version', { p_version: CONSENT_VERSION, p_body: CONSENT_TEXT });
   if (!SUPABASE_URL || !SECRET || !TOKEN_KEY) throw new Error('Settings are missing. Run "npm run setup:env" (or double-click Enter-Supabase-Key.cmd).');
   const alive = await fetch(`${APP}/login`).then((r) => r.ok).catch(() => false);
   if (!alive) throw new Error(`The app is not running at ${APP}. Start it first (npm run dev, or double-click Start-YouNMeSign.cmd), then run this again.`);
@@ -165,7 +168,7 @@ describe('signer routes of the running app', () => {
   });
 
   it('after the approver approves, the next person gets in and the one after still does not', async () => {
-    await rpc('signer_consent', { p_token_id: people.boss.tokenId, p_version: 'test', p_disclosure_sha256: sha('test'), p_ip: null, p_user_agent: 'api-test' });
+    await rpc('signer_consent', { p_token_id: people.boss.tokenId, p_version: CONSENT_VERSION, p_disclosure_sha256: sha(CONSENT_TEXT), p_ip: null, p_user_agent: 'api-test' });
     expect(await rpc<string>('signer_approve', { p_token_id: people.boss.tokenId, p_ip: null, p_user_agent: 'api-test' })).toBe('waiting');
     const one = await open(people.one.token);
     expect(one.status).toBe(200);

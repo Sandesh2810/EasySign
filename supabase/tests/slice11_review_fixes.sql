@@ -13,6 +13,7 @@ declare
   exp timestamptz := now() + interval '30 days';
   n int; cnt int; st text; r record; i int; t text; e_before timestamptz; k_before timestamptz;
 begin
+  perform public.register_consent_version('v1', 'Test consent wording');   -- slice 3: consents must name a wording on file
   insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
   values (a, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 's11-sender@example.test', now(), '{"provider":"email"}', '{"full_name":"Sid Sender"}', now(), now()),
          (b, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 's11-admin@example.test', now(), '{"provider":"email"}', '{"full_name":"Ada Admin"}', now(), now());
@@ -63,7 +64,7 @@ begin
 
   -- T402 (m5): the database refuses a signing step until the identity check is passed
   n := 0;
-  begin perform public.signer_consent(t1, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.signer_consent(t1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, null); n := n + 1; exception when insufficient_privilege then null; end;
   select o.id into oid from public.notification_outbox o where o.recipient_id = s1 and o.kind = 'otp' order by o.created_at desc, o.idempotency_key desc limit 1;
   select o.id into oid from public.notification_outbox o where o.idempotency_key = 'otp:' || t1 || ':' || (select x.otp_requests from public.recipient_auth x where x.recipient_id = s1);
   execute 'reset role';   -- test set-up: pretend the worker has claimed the code email
@@ -71,7 +72,7 @@ begin
   execute 'set local role service_role';
   if not public.signer_store_otp(oid, code_hash) then n := n + 1; end if;
   st := (select x.status from public.signer_verify_otp(t1, code_hash, null, 'ua') x);
-  perform public.signer_consent(t1, 'v1', repeat('c1', 32), null, 'ua');
+  perform public.signer_consent(t1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, 'ua');
   if n = 0 and st = 'ok' and (select x.status from public.recipients x where x.id = s1) = 'consented'
   then res := res || E'PASS T402 the database itself refuses a signing step from someone who has not passed their identity check, and allows it once they have\n';
   else res := res || 'FAIL T402 database gate :: n=' || n || ' verify=' || coalesce(st, '?') || E'\n'; end if;

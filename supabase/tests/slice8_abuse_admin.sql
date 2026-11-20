@@ -11,6 +11,7 @@ declare
   t1 uuid := gen_random_uuid(); h1 text := repeat('a7', 32);
   n int; st text; st2 text; r record; i int; t text;
 begin
+  perform public.register_consent_version('v1', 'Test consent wording');   -- slice 3: consents must name a wording on file
   -- ---------- setup as the migration role ----------
   insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
   values (a, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 's8-sender@example.test', now(), '{"provider":"email"}', '{"full_name":"Sara Sender"}', now(), now()),
@@ -81,7 +82,7 @@ begin
   -- T204 AT2.10: while the sender is suspended the open document is on hold
   n := 0;
   select * into r from public.signer_open(h1, '203.0.113.9', 'ua');
-  begin perform public.signer_consent(t1, 'v1', repeat('c1', 32), null, null); n := n + 1; exception when insufficient_privilege then null; end;
+  begin perform public.signer_consent(t1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', null, null); n := n + 1; exception when insufficient_privilege then null; end;
   begin perform public.signer_decline(t1, 'no', null, null); n := n + 1; exception when insufficient_privilege then null; end;
   begin perform public.signer_auth_state(t1); n := n + 1; exception when insufficient_privilege then null; end;
   begin perform public.create_envelope(a, org_a, 'while suspended', folder_a); n := n + 1; exception when insufficient_privilege then null; end;
@@ -105,7 +106,7 @@ begin
     exit when (select o.status from public.notification_outbox o where o.id = oid) = 'sending';
   end loop;
   select * into r from public.signer_open(h1, '203.0.113.9', 'ua');
-  perform public.signer_consent(t1, 'v1', repeat('c1', 32), '203.0.113.9', 'ua');
+  perform public.signer_consent(t1, 'v1', '252af77b5bc802dfb2722865f1f3522bbae2738e617af28df5b6e5bdeea7af3e', '203.0.113.9', 'ua');
   if st = 'lifted' and st2 = 'unchanged' and r.turn = 'now'
      and (select c.trust_level || '|' || (c.trust_before_suspension is null)::text || '|' || (c.suspended_at is null)::text || '|' || (c.suspended_reason is null)::text
             from public.account_controls c where c.user_id = a) = 'restricted|true|true|true'

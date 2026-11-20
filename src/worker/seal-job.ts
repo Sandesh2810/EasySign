@@ -34,7 +34,7 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
   const recipients = await must(db.from('recipients').select('id, name, email, role, routing_order, auth_method, sent_at, viewed_at, consented_at, completed_at').eq('envelope_id', id).order('routing_order'), 'the recipients');
   const fields = await must(db.from('fields').select('id, recipient_id, type, page, x, y, w, h').eq('envelope_id', id), 'the fields');
   const values = await must(db.from('field_values').select('field_id, value_text, signature_asset_id, signature_id').eq('envelope_id', id), 'the field values');
-  const consents = await must(db.from('consents').select('recipient_id, disclosure_version, ip, user_agent, given_at').eq('envelope_id', id).order('given_at'), 'the consent records');
+  const consents = await must(db.from('consents').select('recipient_id, disclosure_version, ip, user_agent, given_at').eq('envelope_id', id).is('withdrawn_at', null).order('given_at'), 'the consent records');
   const recipientIds = recipients.map((r) => r.id as string);
   const assets = await must(db.from('signature_assets').select('id, recipient_id, kind, method, storage_backend, storage_path, sha256').in('recipient_id', recipientIds), 'the signatures');
   const profile = await must(db.from('profiles').select('display_name').eq('id', envelope.sender_id).maybeSingle(), 'the sender');
