@@ -20,6 +20,7 @@ export const VARS = [
   ['NEXT_PUBLIC_SUPABASE_URL', 'Supabase project URL', 'plain', 'https://jwvmviijpdarawrfvzan.supabase.co'],
   ['NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY', 'Supabase publishable key (starts sb_publishable_; safe to expose)', 'plain', ''],
   ['SUPABASE_SECRET_KEY', 'Supabase SECRET key (starts sb_secret_)', 'secret', ''],
+  ['SUPABASE_DB_URL', 'Database connection string for backups: Session pooler, with the database password filled in', 'secret', ''],
   ['APP_URL', 'Base URL of the app', 'plain', 'http://localhost:3000'],
   ['NOTIFY_MODE', 'Email mode: log | sandbox | live', 'plain', 'log'],
   ['RESEND_API_KEY', 'Resend API key (starts re_; sending access only)', 'secret', ''],
@@ -53,7 +54,7 @@ async function readPipedLine() {
   return (pipedLines.shift() ?? '').trim();
 }
 
-function prompt(question, hidden) {
+export function prompt(question, hidden) {
   process.stdout.write(question);
   if (!process.stdin.isTTY) return readPipedLine().then((v) => (process.stdout.write('\n'), v));
   return new Promise((resolve) => {
@@ -99,6 +100,16 @@ export function checkSecretKey(value) {
   if (value.startsWith('sb_secret_') && value.length >= 30) return null;
   if (value.startsWith('eyJ') && value.split('.').length === 3) return null; // legacy service_role key also works
   return 'That does not look like a Supabase secret key (it should start with sb_secret_).';
+}
+
+/** Catch pasting the wrong database connection string (Phase 3 slice 8, D-73). Returns a problem description or null. */
+export function checkDbUrl(value) {
+  if (!value) return null;
+  if (!/^postgres(ql)?:\/\//.test(value)) return 'That is not a database connection string (it should start with postgresql://).';
+  if (value.includes('[YOUR-PASSWORD]')) return 'The password is still the placeholder [YOUR-PASSWORD]. Put your database password in its place.';
+  if (!/pooler\.supabase\.com:5432\//.test(value)) return 'Use the "Session pooler" string (it contains pooler.supabase.com:5432). The "Direct" one does not work from most home networks.';
+  if (!/^postgres(ql)?:\/\/postgres\.[a-z0-9]{20}:/.test(value)) return 'The user name should look like postgres.<your project id>. Copy the Session pooler string again.';
+  return null;
 }
 
 /** Catch pasting the wrong thing into the Resend key. Returns a problem description or null. */
@@ -147,7 +158,7 @@ async function main() {
     const shown = kind === 'secret' ? (has ? '(already set, hidden)' : '(not set)') : current[name] || def || '(empty)';
     for (;;) {
       const a = await prompt(`${name}\n  ${desc}\n  current: ${shown}\n  ${kind === 'secret' ? 'Paste the value and press Enter (nothing will appear as you paste): ' : 'New value (Enter keeps the current one): '}`, kind === 'secret');
-      const problem = name === 'SUPABASE_SECRET_KEY' ? checkSecretKey(a) : name === 'RESEND_API_KEY' ? checkResendKey(a) : null;
+      const problem = name === 'SUPABASE_SECRET_KEY' ? checkSecretKey(a) : name === 'RESEND_API_KEY' ? checkResendKey(a) : name === 'SUPABASE_DB_URL' ? checkDbUrl(a) : null;
       if (problem) {
         console.log(`  ${problem} Try again, or press Enter to skip.\n`);
         continue;
