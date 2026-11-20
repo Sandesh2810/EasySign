@@ -62,7 +62,8 @@ export function UploadForm() {
       >
         <p className="text-lg text-ink">Drop a file here, or choose one</p>
         <p className="mt-1 text-sm text-ink-muted">PDF, PNG or JPG · up to 10 MB · up to 100 pages</p>
-        <input ref={input} id="file" type="file" accept={ACCEPT} className="sr-only" onChange={(e) => choose(e.target.files?.[0])} />
+        {/* Reached through the "Choose file" button, so it is not a separate Tab stop (slice 9). */}
+        <input ref={input} id="file" type="file" accept={ACCEPT} className="sr-only" tabIndex={-1} aria-label="Choose a file to upload" onChange={(e) => choose(e.target.files?.[0])} />
         <div className="mt-4">
           <Button type="button" variant="outline" onClick={() => input.current?.click()} disabled={busy}>
             Choose file

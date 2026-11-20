@@ -13,7 +13,7 @@ export default function SignerLayout({ children }: LayoutProps<'/'>) {
           {PRODUCT_NAME} <span className="font-normal text-ink-muted">· secure signing</span>
         </p>
       </header>
-      <main className="flex-1">{children}</main>
+      <main id="main" className="flex-1">{children}</main>
       <ReportAbuseFooter />
     </div>
   );

@@ -197,11 +197,12 @@ async function Dashboard({ searchParams }: { searchParams: Promise<Search> }) {
                 <li key={e.id}>
                   <Link href={`/app/envelopes/${e.id}`} className="flex min-h-14 flex-wrap items-center justify-between gap-3 px-6 py-3 text-ink no-underline hover:bg-surface-sand">
                     <span className="min-w-0">
-                      <span className="block truncate text-base">{e.title}</span>
-                      <span className="block truncate text-sm text-ink-muted">
+                      {/* Wraps instead of cutting off, so nothing is lost on a narrow screen (WCAG 1.4.10, slice 9). */}
+                      <span className="block text-base [overflow-wrap:anywhere]">{e.title}</span>
+                      <span className="block text-sm text-ink-muted [overflow-wrap:anywhere]">
                         {e.people ? `${e.people} · ` : ''}
                         {e.folder_name ? `${e.folder_name} · ` : ''}
-                        <span className="font-mono text-xs">{e.public_code}</span>
+                        <span className="font-mono text-xs break-all">{e.public_code}</span>
                       </span>
                     </span>
                     <span className="flex items-center gap-3">

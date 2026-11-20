@@ -23,7 +23,7 @@ async function AccountMenu() {
   ]);
   const unreadCount = unread.count ?? 0;
   return (
-    <div className="flex items-center gap-3">
+    <nav aria-label="Account" className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <Link href="/app/notifications" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
         Notifications
         {unreadCount > 0 ? (
@@ -50,7 +50,7 @@ async function AccountMenu() {
           Sign out
         </Button>
       </form>
-    </div>
+    </nav>
   );
 }
 
@@ -58,7 +58,8 @@ export default function AppLayout({ children }: LayoutProps<'/'>) {
   return (
     <div className="min-h-dvh bg-surface-sand">
       <header className="border-b border-hairline bg-surface">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
+        {/* Wraps onto a second line on narrow screens or at high zoom instead of running off the edge (WCAG 1.4.10, slice 9). */}
+        <div className="mx-auto flex min-h-16 max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 sm:px-6">
           <Link href="/app" className="inline-flex min-h-11 items-center text-lg font-medium text-ink no-underline">
             {PRODUCT_NAME}
           </Link>
@@ -67,7 +68,7 @@ export default function AppLayout({ children }: LayoutProps<'/'>) {
           </Suspense>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <main id="main" className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <Suspense fallback={<p className="text-ink-muted">Loading your workspace…</p>}>{children}</Suspense>
       </main>
     </div>

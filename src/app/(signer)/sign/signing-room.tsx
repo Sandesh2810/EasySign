@@ -262,6 +262,13 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
           </div>
         ) : null}
         {loadError ? <Notice tone="danger">{loadError}</Notice> : null}
+        {/* The pages below are pictures. The same file, opened in a PDF app, can be read aloud by a screen reader (WCAG 1.1.1, slice 9). */}
+        <p className="mb-3 px-2 text-sm text-ink-body">
+          <a href="/api/sign/document" target="_blank" rel="noopener">
+            Open the document as a PDF
+          </a>{' '}
+          to read it in your own PDF app or with a screen reader (opens in a new tab).
+        </p>
         <div ref={wrap} className="flex flex-col items-center gap-4">
           {pages.length === 0 && !loadError ? <p className="py-10 text-ink-muted">Loading the document…</p> : null}
           {pages.map((p, i) => (
@@ -293,7 +300,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         onClick={() => setDialogKind(kind)}
                         style={{ ...box, color: '#141414', backgroundColor: src ? 'transparent' : '#fff3bf', fontSize }}
                         className="absolute flex items-center justify-center overflow-hidden rounded-sm border-2 border-dashed border-[#141414] font-medium focus-visible:outline-4"
-                        aria-label={src ? `Your ${FIELD_LABEL[kind].toLowerCase()} is in place. Change it` : `${FIELD_LABEL[kind]} needed here`}
+                        // The spoken name starts with the visible words ("Sign here" / "Initial"), so voice control finds it (WCAG 2.5.3).
+                        aria-label={src ? `Your ${FIELD_LABEL[kind].toLowerCase()} is in place. Change it` : kind === 'signature' ? 'Sign here (signature needed)' : 'Initial here (initials needed)'}
                       >
                         {src ? (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -319,10 +327,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         maxLength={500}
                         onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
                         onBlur={() => void saveValue(f)}
-                        // On a narrow screen the field on the page is too small to read or tap: use the large box instead.
-                        onFocus={() => {
-                          if (window.innerWidth < 640) setEditing(f.id);
-                        }}
+                        // On a narrow screen the field on the page is too small to read or tap: a tap (or Start/Next) opens the
+                        // large box instead. Not on focus alone: tabbing onto a field must not move focus elsewhere (WCAG 3.2.1, slice 9).
                         onClick={() => {
                           if (window.innerWidth < 640) setEditing(f.id);
                         }}

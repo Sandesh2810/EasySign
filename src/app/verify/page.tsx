@@ -114,7 +114,7 @@ export default function VerifyPage({ searchParams }: PageProps<'/verify'>) {
           {PRODUCT_NAME} <span className="font-normal text-ink-muted">· document check</span>
         </p>
       </header>
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-10 sm:px-6">
+      <main id="main" className="mx-auto w-full max-w-2xl flex-1 px-4 py-10 sm:px-6">
         <h1 className="text-2xl font-medium text-ink">Check a signed document</h1>
         <p className="mt-2 text-base text-ink-body">
           Enter the verification code printed at the bottom of every page. You will see whether the document was completed, and you can check

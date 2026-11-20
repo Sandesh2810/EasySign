@@ -4,7 +4,7 @@ import { PRODUCT_NAME, NO_PHI_NOTICE } from "@/config/brand";
 // Placeholder landing page for the Phase 1 toolchain smoke test. Replaced by the real shell in slice 5.
 export default function Home() {
   return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col justify-center gap-6 px-6 py-16">
+    <main id="main" className="mx-auto flex min-h-dvh max-w-2xl flex-col justify-center gap-6 px-6 py-16">
       <p className="text-sm font-medium uppercase tracking-widest text-ink-muted">Under construction</p>
       <h1 className="font-serif text-5xl font-light italic text-ink">{PRODUCT_NAME}</h1>
       <p className="text-lg text-ink-body">

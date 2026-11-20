@@ -192,17 +192,30 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
   }, [save]);
 
   // ---- placing ----
-  const placeAt = (pageIndex: number, e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canEdit || !tool || !activeSigner || e.target !== e.currentTarget) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+  /** Place the chosen field with its centre at (cx, cy), as fractions of the page. */
+  const placeCentredAt = (pageIndex: number, cx: number, cy: number) => {
+    if (!canEdit || !tool || !activeSigner) return null;
     const size = FIELD_DEFAULT_SIZE[tool];
     const w = size.w / pages[pageIndex].width;
     const h = size.h / pages[pageIndex].height;
-    const r = clampRect({ x: (e.clientX - rect.left) / rect.width - w / 2, y: (e.clientY - rect.top) / rect.height - h / 2, w, h });
+    const r = clampRect({ x: cx - w / 2, y: cy - h / 2, w, h });
     const f: EditorField = { key: newKey(), recipientId: activeSigner, type: tool, page: pageIndex + 1, required: true, ...r };
     commit([...fields, f]);
     setSelected(f.key);
     setTool(null);
+    return f;
+  };
+  const placeAt = (pageIndex: number, e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    placeCentredAt(pageIndex, (e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+  };
+  // Keyboard (and one-click) way to place a field: a free spot down the left side of the page, then the arrow keys
+  // or the Move buttons put it where it belongs (WCAG 2.1.1, slice 9). Focus moves to the new field.
+  const placeFromButton = (pageIndex: number) => {
+    const onPage = fields.filter((f) => f.page === pageIndex + 1).length;
+    const f = placeCentredAt(pageIndex, 0.3, 0.12 + ((onPage * 0.08) % 0.8));
+    if (f) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-field-key="${f.key}"]`)?.focus());
   };
 
   // ---- drag and resize ----
@@ -257,6 +270,9 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
       duplicate(f);
     }
   };
+  // Move or resize with single clicks: the alternative to dragging that WCAG 2.5.7 asks for (slice 9).
+  const adjust = (f: EditorField, dx: number, dy: number, dw: number, dh: number) =>
+    commit(fields.map((x) => (x.key === f.key ? { ...x, ...clampRect({ x: x.x + dx, y: x.y + dy, w: Math.min(x.w + dw, 1 - x.x), h: Math.min(x.h + dh, 1 - x.y) }) } : x)));
   const duplicate = (f: EditorField) => {
     const copy: EditorField = { ...f, key: newKey(), ...clampRect({ ...f, x: f.x + 0.02, y: f.y + 0.02 }) };
     commit([...fields, copy]);
@@ -350,6 +366,31 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
                     </select>
                   </label>
                 ) : null}
+                <span role="group" aria-label="Move or resize the selected field" className="flex flex-wrap items-center gap-1">
+                  {(
+                    [
+                      ['←', 'Move left', -0.01, 0, 0, 0],
+                      ['→', 'Move right', 0.01, 0, 0, 0],
+                      ['↑', 'Move up', 0, -0.01, 0, 0],
+                      ['↓', 'Move down', 0, 0.01, 0, 0],
+                      ['Wider', 'Wider', 0, 0, 0.02, 0],
+                      ['Narrower', 'Narrower', 0, 0, -0.02, 0],
+                      ['Taller', 'Taller', 0, 0, 0, 0.01],
+                      ['Shorter', 'Shorter', 0, 0, 0, -0.01],
+                    ] as const
+                  ).map(([text, label, dx, dy, dw, dh]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-label={label}
+                      title={label}
+                      onClick={() => adjust(sel, dx, dy, dw, dh)}
+                      className="min-h-9 min-w-9 rounded-md border border-[#8a857d] px-2 text-sm text-[#1a1818]"
+                    >
+                      {text}
+                    </button>
+                  ))}
+                </span>
                 <button type="button" onClick={() => duplicate(sel)} className="min-h-9 rounded-md border border-[#8a857d] px-3 text-sm text-[#1a1818]">
                   Duplicate
                 </button>
@@ -377,9 +418,16 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
         {!loadError && pages.length === 0 ? <p className="py-10 text-sm text-[#5e5a55]">Loading document…</p> : null}
         {pages.map((p, i) => (
           <div key={i} className="w-full" style={{ maxWidth: MAX_WIDTH }}>
-            <p className="mb-1 text-xs text-[#5e5a55]">
-              Page {i + 1} of {pages.length}
-            </p>
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-[#5e5a55]">
+                Page {i + 1} of {pages.length}
+              </p>
+              {tool && canEdit ? (
+                <button type="button" onClick={() => placeFromButton(i)} className="min-h-9 rounded-md border border-[#1a1818] bg-white px-3 text-sm text-[#1a1818]">
+                  Place {FIELD_LABEL[tool]} on page {i + 1}
+                </button>
+              ) : null}
+            </div>
             <div
               data-page={i + 1}
               onClick={(e) => placeAt(i, e)}
@@ -400,12 +448,15 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
                 .filter((f) => f.page === i + 1)
                 .map((f) => {
                   const isSel = f.key === selected;
+                  const visible = `${FIELD_LABEL[f.type]}${signers.length > 1 ? ` · ${signerName(f.recipientId)}` : ''}`;
                   return (
                     <div
                       key={f.key}
+                      data-field-key={f.key}
                       role="button"
                       tabIndex={0}
-                      aria-label={`${FIELD_LABEL[f.type]} field for ${signerName(f.recipientId)} on page ${f.page}. Arrow keys move it, Delete removes it.`}
+                      // Starts with the words shown on the box (WCAG 2.5.3, slice 9).
+                      aria-label={`${visible} field${signers.length > 1 ? '' : ` for ${signerName(f.recipientId)}`} on page ${f.page}. Arrow keys or the Move buttons move it, Delete removes it.`}
                       aria-pressed={isSel}
                       onPointerDown={onPointerDown(f, 'move')}
                       onKeyDown={onFieldKey(f)}
@@ -413,10 +464,7 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
                       className={`absolute flex items-center overflow-hidden border-2 border-dashed px-1 text-[11px] font-medium leading-tight text-[#1a1818] ${isSel ? 'outline outline-2 outline-offset-1 outline-[#1a1818]' : ''}`}
                       style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%`, cursor: canEdit ? 'move' : 'default', touchAction: 'none', borderColor: toneOf(f.recipientId).border, backgroundColor: `${toneOf(f.recipientId).bg}${isSel ? 'dd' : '99'}` }}
                     >
-                      <span className="truncate">
-                        {FIELD_LABEL[f.type]}
-                        {signers.length > 1 ? ` · ${signerName(f.recipientId)}` : ''}
-                      </span>
+                      <span className="truncate">{visible}</span>
                       {isSel && canEdit ? (
                         <span
                           onPointerDown={onPointerDown(f, 'resize')}

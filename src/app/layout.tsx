@@ -28,7 +28,13 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   await connection();
   return (
     <html lang="en" className={`${hanken.variable} ${garamond.variable}`}>
-      <body>{children}</body>
+      <body>
+        {/* First Tab stop on every page; hidden until focused (WCAG 2.4.1, slice 9). */}
+        <a href="#main" className="skip-link">
+          Skip to main content
+        </a>
+        {children}
+      </body>
     </html>
   );
 }

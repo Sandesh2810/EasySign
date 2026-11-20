@@ -122,12 +122,15 @@ describe('AT3.2 public /verify page, through the running app', () => {
 
   it('after 20 lookups in 10 minutes the same caller is told to wait; another caller is not', async () => {
     const ip = caller();
+    // A fresh unknown code each run: each code also has its own limit (60 lookups an hour), and this test makes 22,
+    // so a fixed code made the third run within an hour fail for the wrong reason.
+    const code = `ES-2611-ZZZZ-${randomBytes(2).toString('hex').toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}-ZZ`;
     let limitedAt = 0;
     for (let i = 1; i <= 21; i++) {
-      const r = await page('?code=ES-2611-ZZZZ-ZZZZ-ZZZZ-ZZ', ip);
+      const r = await page(`?code=${code}`, ip);
       if (r.html.includes('Too many checks')) { limitedAt = i; break; }
     }
     expect(limitedAt).toBe(21);
-    expect((await page('?code=ES-2611-ZZZZ-ZZZZ-ZZZZ-ZZ')).html).toContain('No document found');
+    expect((await page(`?code=${code}`)).html).toContain('No document found');
   }, 120_000);
 });

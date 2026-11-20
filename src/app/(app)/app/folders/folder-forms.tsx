@@ -34,7 +34,7 @@ export function DeleteFolderForm({ folderId, name }: { folderId: string; name: s
   return (
     <form action={action} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="folder_id" value={folderId} />
-      <Button type="submit" variant="outline" className="min-h-10 px-4 text-sm" disabled={pending} aria-label={`Delete the folder ${name}`}>
+      <Button type="submit" variant="outline" className="min-h-10 px-4 text-sm" disabled={pending} aria-label={`Delete folder: ${name}`}>
         Delete folder
       </Button>
       <Said state={state} />
