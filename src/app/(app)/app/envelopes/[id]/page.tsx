@@ -21,6 +21,7 @@ import { SendPanel, SigningLinkPanel } from './send-panel';
 import { SenderTasks, type TaskView } from './sender-tasks';
 import { DeleteForm, LegalHoldForm } from './retention-panel';
 import { retentionWindow } from '@/lib/retention';
+import { loadAuditTrail } from '@/lib/audit-read';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export const metadata: Metadata = { title: 'Document' };
@@ -69,6 +70,8 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
   const signers = recipients.filter((r) => r.role === 'signer' || r.role === 'in_person').map((r) => ({ id: r.id, name: r.name }));
   const isDraft = env.status === 'draft';
   const isOpen = env.status === 'sent' || env.status === 'in_progress';
+  // the whole audit trail, archived parts included (D-72); drafts have only their own creation events
+  const trail = isDraft ? null : await loadAuditTrail(env.id as string).catch(() => null);
   const isFinished = ['completed', 'declined', 'voided', 'expired'].includes(env.status as string);
   const deleted = Boolean(env.deleted_at);
   // who may hold or delete, and until when this document must be kept (D-71); the database checks all of it again
@@ -211,18 +214,22 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
               <dt className="text-ink-muted">SHA-256</dt>
               <dd className="break-all font-mono text-xs text-ink">{doc.sha256}</dd>
             </dl>
-            <p className="mt-4 text-sm">
-              <a href={`/api/envelopes/${env.id}/document`} target="_blank" rel="noopener">
-                Open the original PDF in a new tab
-              </a>
-            </p>
+            {deleted ? (
+              <p className="mt-4 text-sm text-ink-muted">The file was deleted; only its fingerprint above remains.</p>
+            ) : (
+              <p className="mt-4 text-sm">
+                <a href={`/api/envelopes/${env.id}/document`} target="_blank" rel="noopener">
+                  Open the original PDF in a new tab
+                </a>
+              </p>
+            )}
           </>
         ) : (
           <p className="mt-3 text-sm text-ink-muted">No file is attached to this document.</p>
         )}
       </section>
 
-      {doc ? (
+      {doc && !deleted ? (
         <section>
           <h2 className="mb-3 text-base font-medium text-ink">{isDraft ? '2. Where do they sign?' : 'Fields'}</h2>
           <FieldEditor key={signers.map((s) => s.id).join(',') || 'none'} envelopeId={env.id} documentId={doc.id} signers={signers} initialFields={initialFields} readOnly={!isDraft} />
@@ -315,7 +322,10 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
           <MoveToFolderForm envelopeId={env.id as string} current={(env.folder_id as string | null) ?? null} folders={(folderRows ?? []).filter((f) => f.org_id === env.org_id).map((f) => ({ id: f.id as string, name: f.name as string }))} />
         </div>
         <ol className="mt-4 flex flex-col gap-2 border-l border-hairline pl-4 text-sm">
-          {buildTimeline((events ?? []) as { event_type: string; created_at: string; recipient_id: string | null }[], new Map(recipients.map((r) => [r.id, r.name]))).map((t, i) => (
+          {buildTimeline(
+            (trail ? trail.rows : (events ?? [])) as { event_type: string; created_at: string; recipient_id: string | null }[],
+            new Map(recipients.map((r) => [r.id, r.name])),
+          ).map((t, i) => (
             <li key={i}>
               <time dateTime={t.when} className="text-ink-muted">
                 {t.when.slice(0, 10)} {t.when.slice(11, 16)} UTC
@@ -325,7 +335,20 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
             </li>
           ))}
         </ol>
-        <p className="mt-3 text-sm text-ink-muted">The complete, tamper-evident record (with internet addresses and devices) is in the certificate of the completed document.</p>
+        {trail ? (
+          <div className="mt-4 flex flex-col gap-2 text-sm">
+            <p className={trail.verify.ok ? 'text-ink-body' : 'font-medium text-ink'} role={trail.verify.ok ? undefined : 'alert'}>
+              {trail.verify.ok
+                ? `History check: all ${trail.rows.length} events are intact and linked${trail.archivedParts.length > 0 ? ' (older events are kept in a compressed archive)' : ''}.`
+                : `History check FAILED: ${trail.verify.reason ?? 'unknown reason'}. Contact the administrator.`}
+            </p>
+            <p className="flex flex-wrap gap-4">
+              <a href={`/api/envelopes/${env.id}/audit?format=pdf`}>Download the full audit trail (PDF)</a>
+              <a href={`/api/envelopes/${env.id}/audit?format=json`}>Download it as data (JSON, re-checkable)</a>
+            </p>
+          </div>
+        ) : null}
+        <p className="mt-3 text-sm text-ink-muted">The complete, tamper-evident record (with internet addresses and devices) is in the audit trail downloads above and in the certificate of the completed document.</p>
       </section>
     </div>
   );

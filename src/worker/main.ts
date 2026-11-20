@@ -6,8 +6,12 @@ import { NOTIFY_MODE } from '@/config/brand';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { runOutbox } from './outbox';
 import { runOneSealJob } from './seal-job';
+import { archiveDue, ARCHIVE_AFTER_DAYS } from './audit-archive';
 
 const once = process.argv.includes('--once');
+// --archive-now [days] [document id]: archive the audit trails of documents finished at least [days] ago
+// (default 30), or of that one document, then exit
+const archiveNowAt = process.argv.indexOf('--archive-now');
 const IDLE_MS = 5000;
 const BUSY_MS = 500;
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
@@ -41,8 +45,15 @@ async function runDue(): Promise<boolean> {
 }
 
 /** One pass: returns true when something was done (so the loop looks again straight away). */
+const ARCHIVE_EVERY_MS = 6 * 3600_000;
+let lastArchive = 0;
+
 async function tick(): Promise<boolean> {
   let busy = await runDue();
+  if (Date.now() - lastArchive >= ARCHIVE_EVERY_MS) {
+    lastArchive = Date.now();
+    await archiveDue(log, ARCHIVE_AFTER_DAYS, 5);
+  }
   const seal = await runOneSealJob(log);
   if (seal !== 'none') busy = true;
   if ((await runOutbox(log)) > 0) busy = true;
@@ -71,4 +82,16 @@ async function main() {
   log('worker stopped');
 }
 
-void main();
+if (archiveNowAt >= 0) {
+  const days = Number.parseInt(process.argv[archiveNowAt + 1] ?? "", 10);
+  const one = /^[0-9a-f-]{36}$/.test(process.argv[archiveNowAt + 2] ?? "") ? process.argv[archiveNowAt + 2] : null;
+  void archiveDue(log, Number.isFinite(days) ? days : ARCHIVE_AFTER_DAYS, 20, one).then(
+    (n) => log(`audit archive: ${n} document(s) archived`),
+    (e) => {
+      log(`audit archive failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      process.exitCode = 1;
+    },
+  );
+} else {
+  void main();
+}

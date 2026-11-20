@@ -25,6 +25,8 @@ const LABELS: Record<string, string> = {
   legal_hold_released: 'Legal hold released',
   deletion_started: 'Deletion started by the owner',
   envelope_deleted: 'Deleted by the owner (files, typed values, signatures and names removed)',
+  verify_page_hit: 'Looked up on the public check page',
+  audit_exported: 'Audit trail downloaded',
   code_requested: 'Asked for an emailed code',
   check_passed: 'Passed the extra identity check',
   check_failed: 'Entered a wrong code',
