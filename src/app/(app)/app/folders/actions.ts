@@ -8,14 +8,15 @@ import { requireUser } from '@/lib/auth/session';
 import { friendlyDbError } from '@/lib/request-guard';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { activeWorkspace, canSend } from '@/lib/workspace';
 
 export type FolderResult = { ok: true; message: string } | { ok: false; message: string } | null;
 const name = z.string().trim().min(1, 'Give the folder a name.').max(120, 'Folder names can be up to 120 characters.');
 
+/** The workspace in use, if this person may add folders and rules there (viewers may not). */
 async function myOrg(userId: string): Promise<string | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase.from('memberships').select('org_id, role').eq('user_id', userId).in('role', ['owner', 'admin', 'member']).limit(1).maybeSingle();
-  return (data?.org_id as string | undefined) ?? null;
+  const ws = await activeWorkspace(userId).catch(() => null);
+  return ws && canSend(ws.current.role) ? ws.current.orgId : null;
 }
 
 export async function createFolderAction(_prev: FolderResult, formData: FormData): Promise<FolderResult> {

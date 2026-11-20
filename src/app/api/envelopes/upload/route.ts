@@ -10,6 +10,7 @@ import { friendlyDbError, json, requireApiUser } from '@/lib/request-guard';
 import { allow, TOO_MANY } from '@/lib/rate-limit';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getStorage } from '@/storage';
+import { activeWorkspace, canSend } from '@/lib/workspace';
 import { imageToPdf, sniffUpload } from '@/pdf/image-to-pdf';
 import { inspectPdf } from '@/pdf/inspect';
 
@@ -56,9 +57,11 @@ export async function POST(request: NextRequest) {
   if (!info.ok) return json(422, { error: info.message, code: info.code });
 
   const admin = supabaseAdmin();
-  const membership = await admin.from('memberships').select('org_id').eq('user_id', user.id).order('created_at').limit(1).maybeSingle();
-  if (membership.error || !membership.data) return json(403, { error: 'No workspace was found for your account.' });
-  const orgId = membership.data.org_id as string;
+  // the workspace the person is working in (create_envelope checks the membership again)
+  const ws = await activeWorkspace(user.id).catch(() => null);
+  if (!ws) return json(403, { error: 'No workspace was found for your account.' });
+  if (!canSend(ws.current.role)) return json(403, { error: 'Viewers cannot add documents to this workspace.' });
+  const orgId = ws.current.orgId;
 
   // Display name only; never used as a path. Strip directories and control characters.
   const displayName = (file.name || 'document').replace(/^.*[\\/]/, '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200) || 'document';

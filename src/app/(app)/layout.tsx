@@ -5,6 +5,8 @@ import { requireUser } from '@/lib/auth/session';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { Button } from '@/components/ui';
 import { signOutAction } from '../(auth)/actions';
+import { activeWorkspace, ROLE_LABEL } from '@/lib/workspace';
+import { switchWorkspaceAction } from './app/team/actions';
 
 // Pages under /app depend on who is signed in, so they are rendered for each request rather than
 // prepared ahead of the click; this tells Next.js not to flag that as a missed optimisation.
@@ -16,14 +18,41 @@ async function AccountMenu() {
   const user = await requireUser('/app');
   // Only decides whether to show the link; the page and its actions check again in the database.
   const supabase = await createSupabaseServerClient();
-  const [{ data: controls }, unread] = await Promise.all([
+  const [{ data: controls }, unread, workspaces] = await Promise.all([
     supabase.from('account_controls').select('is_platform_admin').eq('user_id', user.id).maybeSingle(),
     // row-level security limits this to the person's own notices
     supabase.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
+    activeWorkspace(user.id).catch(() => null),
   ]);
   const unreadCount = unread.count ?? 0;
   return (
     <nav aria-label="Account" className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {workspaces && workspaces.all.length > 1 ? (
+        // Only lists workspaces the database says this person may use now; the action checks again.
+        <form action={switchWorkspaceAction} className="flex items-center gap-2">
+          <label htmlFor="workspace-switch" className="sr-only">
+            Workspace
+          </label>
+          <select
+            id="workspace-switch"
+            name="org_id"
+            defaultValue={workspaces.current.orgId}
+            className="min-h-10 max-w-[12rem] rounded-sm border border-control-border bg-surface px-2 text-sm text-ink"
+          >
+            {workspaces.all.map((w) => (
+              <option key={w.orgId} value={w.orgId}>
+                {w.name} ({ROLE_LABEL[w.role]})
+              </option>
+            ))}
+          </select>
+          <Button type="submit" variant="outline" className="min-h-10 px-3 text-sm">
+            Switch
+          </Button>
+        </form>
+      ) : null}
+      <Link href="/app/team" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
+        Team
+      </Link>
       <Link href="/app/notifications" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
         Notifications
         {unreadCount > 0 ? (

@@ -8,6 +8,7 @@ import { Notice } from '@/components/ui';
 import { StatusChip } from '@/components/status-chip';
 import { EmailMeter } from '@/components/email-meter';
 import { NO_PHI_NOTICE } from '@/config/brand';
+import { activeWorkspace, canSend, ROLE_LABEL } from '@/lib/workspace';
 
 export const metadata: Metadata = { title: 'Dashboard' };
 
@@ -64,21 +65,20 @@ async function Dashboard({ searchParams }: { searchParams: Promise<Search> }) {
   const view: View = (VIEWS.some((v) => v.id === sp.view) ? sp.view : 'all') as View;
   const page = Math.max(1, Math.min(200, Number.parseInt(String(sp.page ?? '1'), 10) || 1));
   const supabase = await createSupabaseServerClient();
-  const [{ data: profile }, { data: controls }, { data: memberships }, { data: folders }] = await Promise.all([
+  const { current: ws, all: workspaces } = await activeWorkspace(user.id);
+  const [{ data: profile }, { data: controls }, { data: folders }] = await Promise.all([
     supabase.from('profiles').select('display_name').eq('id', user.id).maybeSingle(),
     supabase.from('account_controls').select('approved, trust_level').eq('user_id', user.id).maybeSingle(),
-    supabase.from('memberships').select('role, organizations(name)').eq('user_id', user.id),
-    supabase.from('folders').select('id, name').order('name'),
+    supabase.from('folders').select('id, name').eq('org_id', ws.orgId).order('name'),
   ]);
   const folder = (folders ?? []).some((f) => f.id === sp.folder) ? String(sp.folder) : '';
-  // search_envelopes looks only in the workspaces this user belongs to (it checks the user itself)
-  const { data, error } = await supabaseAdmin().rpc('search_envelopes', { p_actor: user.id, p_query: q, p_view: view, p_folder_id: folder || null, p_limit: PAGE, p_offset: (page - 1) * PAGE });
+  // search_envelopes looks only in this workspace and applies the team rules itself (a member sees only their own documents)
+  const { data, error } = await supabaseAdmin().rpc('search_envelopes', { p_actor: user.id, p_org_id: ws.orgId, p_query: q, p_view: view, p_folder_id: folder || null, p_limit: PAGE, p_offset: (page - 1) * PAGE });
   const list = (data ?? []) as Row[];
   const total = Number(list[0]?.total_count ?? 0);
   const base = { q, view, folder };
 
-  const workspace = (memberships?.[0] as { role: string; organizations: { name: string } | { name: string }[] | null } | undefined) ?? null;
-  const org = Array.isArray(workspace?.organizations) ? workspace?.organizations[0] : workspace?.organizations;
+  const org = { name: workspaces.length > 1 ? `${ws.name} · ${ROLE_LABEL[ws.role]}` : ws.name };
   const filtered = q !== '' || view !== 'all' || folder !== '';
 
   return (
@@ -92,9 +92,11 @@ async function Dashboard({ searchParams }: { searchParams: Promise<Search> }) {
           <Link href="/app/folders" className="inline-flex min-h-11 items-center rounded-pill border border-control-border px-5 text-base text-ink no-underline">
             Folders
           </Link>
-          <Link href="/app/new" className="inline-flex min-h-11 items-center rounded-pill bg-ink px-6 text-base font-medium text-on-ink no-underline">
-            New document
-          </Link>
+          {canSend(ws.role) ? (
+            <Link href="/app/new" className="inline-flex min-h-11 items-center rounded-pill bg-ink px-6 text-base font-medium text-on-ink no-underline">
+              New document
+            </Link>
+          ) : null}
         </div>
       </div>
       {/* requireUser already sent anyone with an authenticator to the code page, so aal1 here means "not set up" */}

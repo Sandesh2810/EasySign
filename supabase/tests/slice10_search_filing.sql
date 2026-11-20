@@ -74,19 +74,19 @@ begin
 
   -- T304: search and filters
   n := 0;
-  if (select count(*) from public.search_envelopes(a, 'lease', 'all', null, 50, 0)) <> 1 then n := n + 1; end if;                -- not Bob's lease
-  if (select count(*) from public.search_envelopes(a, 'QUINCY', 'all', null, 50, 0)) <> 1 then n := n + 1; end if;               -- a person's name
-  if (select count(*) from public.search_envelopes(a, 'tenant@example', 'all', null, 50, 0)) <> 1 then n := n + 1; end if;       -- an email
-  if (select count(*) from public.search_envelopes(a, (select right(e.public_code, 7) from public.envelopes e where e.id = e2), 'all', null, 50, 0)) <> 1 then n := n + 1; end if;
-  if (select count(*) from public.search_envelopes(a, '%', 'all', null, 50, 0)) <> 0 then n := n + 1; end if;                    -- a wildcard is just a character
-  if (select count(*) from public.search_envelopes(a, '', 'completed', null, 50, 0)) <> 1 then n := n + 1; end if;
-  if (select count(*) from public.search_envelopes(a, '', 'draft', null, 50, 0)) <> 1 then n := n + 1; end if;
-  if (select count(*) from public.search_envelopes(a, '', 'all', leases, 50, 0)) <> 0 then n := n + 1; end if;
-  if (select count(*) from public.search_envelopes(a, '', 'all', done_a, 50, 0)) <> 2 then n := n + 1; end if;
-  if (select string_agg(x.people, ',') from public.search_envelopes(a, 'lease', 'all', null, 50, 0) x) <> 'Quincy Tenant' then n := n + 1; end if;
-  if (select max(x.total_count) from public.search_envelopes(a, '', 'all', null, 1, 0) x) <> 2 then n := n + 1; end if;
-  if (select count(*) from public.search_envelopes(b, 'board', 'all', null, 50, 0)) <> 0 then n := n + 1; end if;
-  begin perform public.search_envelopes(a, '', 'everything', null, 50, 0); n := n + 1; exception when invalid_parameter_value then null; end;
+  if (select count(*) from public.search_envelopes(a, org_a, 'lease', 'all', null, 50, 0)) <> 1 then n := n + 1; end if;                -- not Bob's lease
+  if (select count(*) from public.search_envelopes(a, org_a, 'QUINCY', 'all', null, 50, 0)) <> 1 then n := n + 1; end if;               -- a person's name
+  if (select count(*) from public.search_envelopes(a, org_a, 'tenant@example', 'all', null, 50, 0)) <> 1 then n := n + 1; end if;       -- an email
+  if (select count(*) from public.search_envelopes(a, org_a, (select right(e.public_code, 7) from public.envelopes e where e.id = e2), 'all', null, 50, 0)) <> 1 then n := n + 1; end if;
+  if (select count(*) from public.search_envelopes(a, org_a, '%', 'all', null, 50, 0)) <> 0 then n := n + 1; end if;                    -- a wildcard is just a character
+  if (select count(*) from public.search_envelopes(a, org_a, '', 'completed', null, 50, 0)) <> 1 then n := n + 1; end if;
+  if (select count(*) from public.search_envelopes(a, org_a, '', 'draft', null, 50, 0)) <> 1 then n := n + 1; end if;
+  if (select count(*) from public.search_envelopes(a, org_a, '', 'all', leases, 50, 0)) <> 0 then n := n + 1; end if;
+  if (select count(*) from public.search_envelopes(a, org_a, '', 'all', done_a, 50, 0)) <> 2 then n := n + 1; end if;
+  if (select string_agg(x.people, ',') from public.search_envelopes(a, org_a, 'lease', 'all', null, 50, 0) x) <> 'Quincy Tenant' then n := n + 1; end if;
+  if (select max(x.total_count) from public.search_envelopes(a, org_a, '', 'all', null, 1, 0) x) <> 2 then n := n + 1; end if;
+  if (select count(*) from public.search_envelopes(b, org_b, 'board', 'all', null, 50, 0)) <> 0 then n := n + 1; end if;
+  begin perform public.search_envelopes(a, org_a, '', 'everything', null, 50, 0); n := n + 1; exception when invalid_parameter_value then null; end;
   if n = 0 then res := res || E'PASS T304 search finds a document by title, code, person or email, only in the user''s own workspaces; filters by state and folder; wildcards are taken literally\n';
   else res := res || 'FAIL T304 search :: ' || n || E'\n'; end if;
 
@@ -103,12 +103,12 @@ begin
   execute 'set local role service_role';
   foreach q in array array['', 'agreement 4242', 'zzz-nothing-matches', 'person', '@example.test'] loop
     t0 := clock_timestamp();
-    perform * from public.search_envelopes(a, q, 'all', null, 50, 0);
+    perform * from public.search_envelopes(a, org_a, q, 'all', null, 50, 0);
     ms := extract(epoch from clock_timestamp() - t0) * 1000;
     worst := greatest(worst, ms);
   end loop;
   t0 := clock_timestamp();
-  perform * from public.search_envelopes(a, 'agreement', 'all', leases, 50, 0);
+  perform * from public.search_envelopes(a, org_a, 'agreement', 'all', leases, 50, 0);
   worst := greatest(worst, extract(epoch from clock_timestamp() - t0) * 1000);
   select count(*) into cnt from public.envelopes e where e.org_id = org_a;
   if cnt >= 10000 and worst < 300 then res := res || 'PASS T305 AT2.12: search over ' || cnt || ' documents answers in under 300 ms (slowest of six searches ' || round(worst) || E' ms)\n';
@@ -116,7 +116,7 @@ begin
 
   -- T306: server-only; rules readable by members only
   n := 0;
-  foreach q in array array['public.set_filing_rule(uuid, uuid, uuid, text, int)', 'public.delete_filing_rule(uuid, uuid)', 'public.move_to_folder(uuid, uuid, uuid)', 'public.search_envelopes(uuid, text, text, uuid, int, int)'] loop
+  foreach q in array array['public.set_filing_rule(uuid, uuid, uuid, text, int)', 'public.delete_filing_rule(uuid, uuid)', 'public.move_to_folder(uuid, uuid, uuid)', 'public.search_envelopes(uuid, uuid, text, text, uuid, int, int)'] loop
     if has_function_privilege('authenticated', q, 'execute') or has_function_privilege('anon', q, 'execute') or not has_function_privilege('service_role', q, 'execute') then n := n + 1; end if;
   end loop;
   if has_function_privilege('service_role', 'app_private.file_on_complete()', 'execute') or has_table_privilege('authenticated', 'public.filing_rules', 'insert')

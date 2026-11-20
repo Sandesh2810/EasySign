@@ -10,7 +10,7 @@ import { loadAuditTrail } from '@/lib/audit-read';
 import { allow, clientIp, TOO_MANY, userAgent } from '@/lib/rate-limit';
 import { json, requireApiUser } from '@/lib/request-guard';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { activeWorkspace } from '@/lib/workspace';
 import { safeZipName, zipStream, ZIP_MAX_FILES, type ZipSource } from '@/lib/zip-stream';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -22,9 +22,10 @@ export async function GET(request: NextRequest) {
   const auth = await requireApiUser(request, { mutation: false });
   if ('response' in auth) return auth.response;
   const user = auth.user;
-  const supabase = await createSupabaseServerClient();
-  const { data: m } = await supabase.from('memberships').select('org_id, role, organizations(name)').eq('user_id', user.id).eq('role', 'owner').order('created_at').limit(1).maybeSingle();
-  if (!m) return json(403, { error: 'Only the workspace owner can export the workspace.' });
+  // the workspace in use; only its owner may export it (record_workspace_export checks that again)
+  const ws = await activeWorkspace(user.id).catch(() => null);
+  if (!ws || ws.current.role !== 'owner') return json(403, { error: 'Only the workspace owner can export the workspace.' });
+  const m = { org_id: ws.current.orgId, organizations: { name: ws.current.name } };
   if (!(await mfaStatus(user.id)).enrolled) return back(request, '/app/settings?export=needs-mfa');
   if (!usedAuthenticatorWithin({ aal: user.aal, amr: user.amr, nowSeconds: Date.now() / 1000, seconds: DANGEROUS_ACTION_FRESH_SECONDS })) {
     return back(request, `/mfa?next=${encodeURIComponent('/app/settings?export=ready')}&fresh=1`);
@@ -52,7 +53,7 @@ export async function GET(request: NextRequest) {
   const logged = await admin.rpc('record_workspace_export', { p_actor: user.id, p_org: orgId, p_documents: list.length, p_ip: isIP(ip) ? ip : null, p_user_agent: await userAgent() });
   if (logged.error) return json(502, { error: 'The export could not be recorded, so it was not given out. Try again.' });
 
-  const org = Array.isArray(m.organizations) ? m.organizations[0] : m.organizations;
+  const org = m.organizations;
   const dirOf = (d: { public_code: unknown }) => `documents/${String(d.public_code)}`;
   const manifest = {
     format: 'younmesign-workspace-export',

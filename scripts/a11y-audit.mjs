@@ -77,7 +77,9 @@ async function prepare() {
     const upd = await db.auth.admin.updateUserById(sender.id, { password });
     if (upd.error) throw new Error(`updateUser: ${upd.error.message}`);
   }
-  const controls = await db.from('account_controls').update({ approved: true, daily_envelope_cap: 100000, daily_recipient_cap: 100000 }).eq('user_id', sender.id);
+  // 'trusted' keeps this synthetic sender's completion emails out of the small daily pool new accounts share, which the
+  // route tests' sender needs (each run here completes documents; 18 emails a day otherwise).
+  const controls = await db.from('account_controls').update({ approved: true, trust_level: 'trusted', daily_envelope_cap: 100000, daily_recipient_cap: 100000 }).eq('user_id', sender.id);
   if (controls.error) throw new Error(`account_controls: ${controls.error.message}`);
   const membership = await db.from('memberships').select('org_id').eq('user_id', sender.id).eq('role', 'owner').single();
   if (membership.error) throw new Error(`membership: ${membership.error.message}`);
@@ -273,7 +275,7 @@ async function main() {
 
     // ---- public pages ----
     say('Public pages');
-    for (const [label, p] of [['Sign in', '/login'], ['Create account', '/signup'], ['Check a document (/verify)', '/verify']]) {
+    for (const [label, p] of [['Sign in', '/login'], ['Create account', '/signup'], ['Check a document (/verify)', '/verify'], ['Join a team (no invitation in the link)', '/join']]) {
       await page.goto(`${APP}${p}`, { waitUntil: 'networkidle0' });
       await axeCheck(page, label);
       await reflowCheck(page, label);
@@ -386,6 +388,7 @@ async function main() {
       ['Sender: notifications', '/app/notifications'],
       ['Sender: settings', '/app/settings'],
       ['Sender: sign-in security', '/app/account/security'],
+      ['Sender: team', '/app/team'],
     ];
     for (const [label, p] of senderPages) {
       await page.goto(`${APP}${p}`, { waitUntil: 'networkidle0' });

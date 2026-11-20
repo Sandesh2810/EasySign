@@ -3,6 +3,7 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import { requireUser } from '@/lib/auth/session';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { activeWorkspace } from '@/lib/workspace';
 import { AddRuleForm, CreateFolderForm, DeleteFolderForm, DeleteRuleForm } from './folder-forms';
 
 export const metadata: Metadata = { title: 'Folders' };
@@ -15,14 +16,16 @@ export default function FoldersPage() {
   );
 }
 
-// Reads through the user's own session: row-level security shows only this workspace's folders and rules.
+// Reads through the user's own session (row-level security limits it to workspaces they are in and, for a member,
+// to their own documents), narrowed to the workspace in use.
 async function Folders() {
-  await requireUser('/app/folders');
+  const user = await requireUser('/app/folders');
+  const { current: ws } = await activeWorkspace(user.id);
   const supabase = await createSupabaseServerClient();
   const [{ data: folders }, { data: rules }, { data: completed }] = await Promise.all([
-    supabase.from('folders').select('id, name').order('name'),
-    supabase.from('filing_rules').select('id, folder_id, title_contains, created_at').order('position').order('created_at'),
-    supabase.from('envelopes').select('folder_id').eq('status', 'completed').not('folder_id', 'is', null).limit(5000),
+    supabase.from('folders').select('id, name').eq('org_id', ws.orgId).order('name'),
+    supabase.from('filing_rules').select('id, folder_id, title_contains, created_at').eq('org_id', ws.orgId).order('position').order('created_at'),
+    supabase.from('envelopes').select('folder_id').eq('org_id', ws.orgId).eq('status', 'completed').not('folder_id', 'is', null).limit(5000),
   ]);
   const list = (folders ?? []).map((f) => ({ id: f.id as string, name: f.name as string }));
   const done = new Map<string, number>();
