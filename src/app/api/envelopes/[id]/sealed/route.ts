@@ -20,10 +20,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const supabase = await createSupabaseServerClient();
   const { data: env } = await supabase
     .from('envelopes')
-    .select('title, status, sealed_storage_backend, sealed_storage_path, certificate_storage_path')
+    .select('title, status, sealed_storage_backend, sealed_storage_path, certificate_storage_path, deleted_at')
     .eq('id', id.data)
     .maybeSingle();
   if (!env || env.status !== 'completed' || !env.sealed_storage_path || !env.certificate_storage_path) return json(404, { error: 'Document not found.' });
+  if (env.deleted_at) return json(410, { error: 'This document was deleted by the workspace owner.' });
 
   // Every download is written to the document's audit trail first; if that fails, nothing is served.
   if (!(await allow({ bucket: 'download_user', limit: 120, windowSeconds: 3600 }, auth.user.id))) return json(429, { error: TOO_MANY });

@@ -9,6 +9,8 @@ import {
   mfaGate,
   normaliseRecoveryCode,
   safeNext,
+  DANGEROUS_ACTION_FRESH_SECONDS,
+  usedAuthenticatorWithin,
 } from './mfa-policy';
 
 const NOW = 1_800_000_000;
@@ -65,6 +67,14 @@ describe('who must enter a code (AT3.4; policy D-69)', () => {
     expect(lastAuthenticatorCheck([{ method: 'totp', timestamp: 5 }, { method: 'totp', timestamp: 9 }, { method: 'password', timestamp: 99 }])).toBe(9);
     expect(lastAuthenticatorCheck([{ method: 'totp', timestamp: '9' }, null, 3])).toBeNull();
     expect(lastAuthenticatorCheck(undefined)).toBeNull();
+  });
+
+  it('dangerous actions need a code from the last 10 minutes in this session (D-71)', () => {
+    const at = (secondsAgo: number) => [{ method: 'totp', timestamp: NOW - secondsAgo }];
+    expect(usedAuthenticatorWithin({ aal: 'aal2', amr: at(60), nowSeconds: NOW, seconds: DANGEROUS_ACTION_FRESH_SECONDS })).toBe(true);
+    expect(usedAuthenticatorWithin({ aal: 'aal2', amr: at(11 * 60), nowSeconds: NOW, seconds: DANGEROUS_ACTION_FRESH_SECONDS })).toBe(false);
+    expect(usedAuthenticatorWithin({ aal: 'aal1', amr: at(60), nowSeconds: NOW, seconds: DANGEROUS_ACTION_FRESH_SECONDS })).toBe(false);
+    expect(usedAuthenticatorWithin({ aal: 'aal2', amr: [{ method: 'password', timestamp: NOW }], nowSeconds: NOW, seconds: DANGEROUS_ACTION_FRESH_SECONDS })).toBe(false);
   });
 
   it('accepts only six-digit codes and same-site return paths', () => {

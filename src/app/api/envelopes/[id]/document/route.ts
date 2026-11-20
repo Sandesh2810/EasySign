@@ -16,6 +16,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!id.success) return json(404, { error: 'Document not found.' });
 
   const supabase = await createSupabaseServerClient();
+  const { data: parent } = await supabase.from('envelopes').select('deleted_at').eq('id', id.data).maybeSingle();
+  if (parent?.deleted_at) return json(410, { error: 'This document was deleted by the workspace owner.' });
   const { data: doc } = await supabase.from('envelope_documents').select('storage_backend, storage_path, sha256').eq('envelope_id', id.data).order('position').limit(1).maybeSingle();
   if (!doc) return json(404, { error: 'Document not found.' });
 

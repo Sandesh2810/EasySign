@@ -34,7 +34,7 @@ async function Body({ searchParams }: { searchParams: Promise<Record<string, str
       <h1 className="text-2xl font-medium text-ink">{fresh ? 'Confirm it is you' : 'Two-step sign-in'}</h1>
       <p className="mt-2 text-base text-ink-body">
         {fresh
-          ? 'The administrator pages need a code from your authenticator app at least every 12 hours. Open the app and enter the six-digit code it shows for YouNMeSign.'
+          ? 'This step needs a fresh code from your authenticator app (the administrator pages ask at least every 12 hours; deleting a document or changing how long documents are kept asks every time). Enter the six-digit code it shows for YouNMeSign.'
           : 'Open your authenticator app and enter the six-digit code it shows for YouNMeSign.'}
       </p>
       <MfaCodeForm next={next} />

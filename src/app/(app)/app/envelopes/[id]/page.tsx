@@ -19,6 +19,9 @@ import { PersonActions, VoidPanel } from './open-actions';
 import { RecipientsEditor, type EditableRecipient } from './recipients-editor';
 import { SendPanel, SigningLinkPanel } from './send-panel';
 import { SenderTasks, type TaskView } from './sender-tasks';
+import { DeleteForm, LegalHoldForm } from './retention-panel';
+import { retentionWindow } from '@/lib/retention';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export const metadata: Metadata = { title: 'Document' };
 
@@ -50,7 +53,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
 
   const supabase = await createSupabaseServerClient();
   const [{ data: env }, { data: docs }, { data: recipientRows }, { data: fields }, { data: profile }, { data: folderRows }, { data: events }, { data: taskRows }] = await Promise.all([
-    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason, expires_at, expired_at, remind_after_days, remind_every_days, remind_max, folder_id, org_id').eq('id', id.data).maybeSingle(),
+    supabase.from('envelopes').select('id, title, status, public_code, created_at, self_sign, final_sha256, completed_at, routing_mode, delivery, void_reason, expires_at, expired_at, remind_after_days, remind_every_days, remind_max, folder_id, org_id, updated_at, legal_hold, legal_hold_reason, legal_hold_set_at, deleted_at').eq('id', id.data).maybeSingle(),
     supabase.from('envelope_documents').select('id, filename, page_count, size_bytes, sha256').eq('envelope_id', id.data).order('position'),
     supabase.from('recipients').select('id, name, email, role, status, is_sender, routing_order, decline_reason, auth_method').eq('envelope_id', id.data).order('routing_order').order('created_at'),
     supabase.from('fields').select('id, recipient_id, type, page, x, y, w, h, required').eq('envelope_id', id.data),
@@ -66,6 +69,20 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
   const signers = recipients.filter((r) => r.role === 'signer' || r.role === 'in_person').map((r) => ({ id: r.id, name: r.name }));
   const isDraft = env.status === 'draft';
   const isOpen = env.status === 'sent' || env.status === 'in_progress';
+  const isFinished = ['completed', 'declined', 'voided', 'expired'].includes(env.status as string);
+  const deleted = Boolean(env.deleted_at);
+  // who may hold or delete, and until when this document must be kept (D-71); the database checks all of it again
+  const [{ data: myRole }, { data: myControls }, { data: orgControls }] = isFinished
+    ? await Promise.all([
+        supabase.from('memberships').select('role').eq('org_id', env.org_id).eq('user_id', user.id).maybeSingle(),
+        supabase.from('account_controls').select('is_platform_admin').eq('user_id', user.id).maybeSingle(),
+        supabaseAdmin().from('org_controls').select('retention_years').eq('org_id', env.org_id).maybeSingle(),
+      ])
+    : [{ data: null }, { data: null }, { data: null }];
+  const isOwner = myRole?.role === 'owner';
+  const canHold = isOwner || Boolean(myControls?.is_platform_admin);
+  const retentionYears = Number(orgControls?.retention_years ?? 7);
+  const { keepUntil, mayDeleteNow } = retentionWindow((env.completed_at ?? env.expired_at ?? env.updated_at) as string, retentionYears);
   const selfSign = isDraft ? recipients.length === 1 && recipients[0].is_sender && recipients[0].role === 'signer' : Boolean(env.self_sign);
   const decliner = recipients.find((r) => r.status === 'declined');
   const nameOf = new Map(recipients.map((r) => [r.id, r.name]));
@@ -226,7 +243,14 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
         </section>
       ) : null}
 
-      {env.status === 'completed' ? (
+      {deleted ? (
+        <Notice tone="info">
+          This document was deleted on {new Date(env.deleted_at as string).toISOString().slice(0, 10)} by the workspace owner. Its files, what people typed,
+          their signatures and their names are gone. Its fingerprints and its history remain, with a record of the deletion.
+        </Notice>
+      ) : null}
+
+      {env.status === 'completed' && !deleted ? (
         <section className="rounded-lg bg-surface p-6 shadow-soft">
           <h2 className="mb-3 text-base font-medium text-ink">Completed</h2>
           <p className="text-sm text-ink-body">Everyone has finished. The sealed file and its certificate are ready.</p>
@@ -235,6 +259,43 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
             <a href={`/api/envelopes/${env.id}/sealed`}>Download the signed PDF</a>
             <a href={`/api/envelopes/${env.id}/sealed?part=certificate`}>Download the certificate</a>
           </p>
+        </section>
+      ) : null}
+
+      {isFinished && !deleted ? (
+        <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="keep-heading">
+          <h2 id="keep-heading" className="mb-3 text-base font-medium text-ink">Keeping and deleting</h2>
+          <p className="text-sm text-ink-body">
+            {retentionYears > 0 ? (
+              <>
+                Your workspace keeps finished documents for {retentionYears} {retentionYears === 1 ? 'year' : 'years'}: this one until{' '}
+                <strong>{keepUntil.toISOString().slice(0, 10)}</strong>.
+              </>
+            ) : (
+              <>Your workspace has no minimum keeping period, so the owner can delete finished documents at any time.</>
+            )}{' '}
+            Nothing is ever deleted automatically.
+            {isOwner ? <> You can change the period in <Link href="/app/settings">Settings</Link>.</> : null}
+          </p>
+          {env.legal_hold ? (
+            <div className="mt-4">
+              <Notice tone="info">
+                On legal hold since {new Date(env.legal_hold_set_at as string).toISOString().slice(0, 10)}
+                {env.legal_hold_reason ? <>: &ldquo;{env.legal_hold_reason}&rdquo;</> : null}. It cannot be deleted while the hold is on.
+              </Notice>
+            </div>
+          ) : null}
+          {canHold ? (
+            <div className="mt-4">
+              <LegalHoldForm envelopeId={env.id} on={Boolean(env.legal_hold)} />
+            </div>
+          ) : null}
+          {isOwner && !env.legal_hold && mayDeleteNow ? (
+            <div className="mt-6 border-t border-hairline pt-4">
+              <DeleteForm envelopeId={env.id} code={env.public_code as string} />
+            </div>
+          ) : null}
+          {isOwner && !env.legal_hold && !mayDeleteNow ? <p className="mt-4 text-sm text-ink-muted">It can be deleted after the retention period ends.</p> : null}
         </section>
       ) : null}
 

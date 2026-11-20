@@ -31,6 +31,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     .select('id, title, public_code, completed_at, sealed_storage_backend, sealed_storage_path, certificate_storage_path')
     .eq('folder_id', folder.id)
     .eq('status', 'completed')
+    .is('deleted_at', null)
     .order('completed_at', { ascending: true })
     .limit(MAX_DOCUMENTS + 1);
   const list = (docs ?? []).filter((d) => d.sealed_storage_path && d.certificate_storage_path);

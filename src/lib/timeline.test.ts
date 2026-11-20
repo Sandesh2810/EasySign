@@ -12,6 +12,11 @@ describe('document history', () => {
     expect(t[0].who).toBeNull();
   });
 
+  it('names the legal hold and deletion steps (AT3.6)', () => {
+    const t = buildTimeline([ev('legal_hold_set'), ev('legal_hold_released'), ev('deletion_started'), ev('envelope_deleted')], names);
+    expect(t.map((x) => x.what)).toEqual(['Put on legal hold', 'Legal hold released', 'Deletion started by the owner', 'Deleted by the owner (files, typed values, signatures and names removed)']);
+  });
+
   it('names the consent and paper-copy steps (AT3.3)', () => {
     const t = buildTimeline([ev('consent_withdrawn', 'r1'), ev('paper_copy_requested', 'r1'), ev('sender_task_done', 'r1')], names);
     expect(t.map((x) => x.what)).toEqual(['Withdrew consent to sign electronically', 'Asked for a paper copy', 'Request marked as done']);

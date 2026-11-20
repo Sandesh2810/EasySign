@@ -64,6 +64,16 @@ export function mfaGate(v: { aal: unknown; amr: unknown; hasFactor: boolean; adm
   return 'ok';
 }
 
+/** Deleting a document or changing the retention period needs an authenticator code from the last 10 minutes (D-71). */
+export const DANGEROUS_ACTION_FRESH_SECONDS = 10 * 60;
+
+/** True when this session used its authenticator within `seconds`. */
+export function usedAuthenticatorWithin(v: { aal: unknown; amr: unknown; nowSeconds: number; seconds: number }): boolean {
+  if (v.aal !== 'aal2') return false;
+  const last = lastAuthenticatorCheck(v.amr);
+  return last !== null && v.nowSeconds - last <= v.seconds && last <= v.nowSeconds + 60;
+}
+
 /** Only same-site paths, as for sign-in (the code page sends people back to where they were going). */
 export function safeNext(next: unknown, fallback = '/app'): string {
   const s = typeof next === 'string' ? next : '';

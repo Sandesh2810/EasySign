@@ -23,8 +23,11 @@ export interface StorageAdapter {
   put(bucket: Bucket, path: string, data: Uint8Array, opts: { contentType: string }): Promise<void>;
   get(bucket: Bucket, path: string): Promise<Uint8Array>;
   exists(bucket: Bucket, path: string): Promise<boolean>;
-  /** Originals can only be removed with draftOnly (the caller has checked the envelope is a draft). */
-  remove(bucket: Bucket, path: string, opts?: { draftOnly?: boolean }): Promise<void>;
+  /**
+   * Originals can only be removed with draftOnly (the caller has checked the envelope is a draft) or deletionStarted
+   * (the owner's deletion was started in the database; for Supabase the database trigger checks it again).
+   */
+  remove(bucket: Bucket, path: string, opts?: { draftOnly?: boolean; deletionStarted?: boolean }): Promise<void>;
   usageBytes(): Promise<number>;
 }
 

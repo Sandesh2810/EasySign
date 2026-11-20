@@ -38,6 +38,9 @@ async function AccountMenu() {
           Accounts
         </Link>
       ) : null}
+      <Link href="/app/settings" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
+        Settings
+      </Link>
       <Link href="/app/account/security" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
         Security
       </Link>

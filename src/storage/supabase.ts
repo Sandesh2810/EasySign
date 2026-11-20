@@ -34,9 +34,9 @@ export class SupabaseStorage implements StorageAdapter {
     return (data ?? []).some((o) => o.name === parts[2]);
   }
 
-  async remove(bucket: Bucket, path: string, opts: { draftOnly?: boolean } = {}): Promise<void> {
+  async remove(bucket: Bucket, path: string, opts: { draftOnly?: boolean; deletionStarted?: boolean } = {}): Promise<void> {
     checkPath(bucket, path);
-    if (bucket === 'originals' && !opts.draftOnly) throw new StorageError('IMMUTABLE', 'Original documents cannot be deleted');
+    if (bucket === 'originals' && !opts.draftOnly && !opts.deletionStarted) throw new StorageError('IMMUTABLE', 'Original documents cannot be deleted');
     const { error } = await this.client.storage.from(bucket).remove([path]);
     if (error) throw new StorageError(/cannot be deleted/i.test(error.message) ? 'IMMUTABLE' : 'BACKEND', 'Could not delete from storage');
   }

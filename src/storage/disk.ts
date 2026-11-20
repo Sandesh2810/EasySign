@@ -112,9 +112,9 @@ export class DiskStorage implements StorageAdapter {
     }
   }
 
-  async remove(bucket: Bucket, rel: string, opts: { draftOnly?: boolean } = {}): Promise<void> {
+  async remove(bucket: Bucket, rel: string, opts: { draftOnly?: boolean; deletionStarted?: boolean } = {}): Promise<void> {
     const file = this.file(bucket, rel);
-    if (bucket === 'originals' && !opts.draftOnly) throw new StorageError('IMMUTABLE', 'Original documents cannot be deleted');
+    if (bucket === 'originals' && !opts.draftOnly && !opts.deletionStarted) throw new StorageError('IMMUTABLE', 'Original documents cannot be deleted');
     await unlink(file).catch((e) => {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new StorageError('BACKEND', 'Could not delete from storage');
     });
