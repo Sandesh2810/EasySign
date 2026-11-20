@@ -38,6 +38,9 @@ async function AccountMenu() {
           Accounts
         </Link>
       ) : null}
+      <Link href="/app/account/security" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
+        Security
+      </Link>
       <span className="hidden text-sm text-ink-muted sm:inline">{user.email}</span>
       <form action={signOutAction}>
         <Button type="submit" variant="outline" className="min-h-10 px-4 text-sm">

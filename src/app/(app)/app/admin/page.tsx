@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { requireUser } from '@/lib/auth/session';
+import { requireAdminMfa } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { LimitsForm, ReportForm, SuspendForm } from './account-controls';
+import { LimitsForm, ReportForm, ResetMfaForm, SuspendForm } from './account-controls';
 import { ApprovalForm } from './approval-form';
 import { EmailPanel } from './email-panel';
 
@@ -58,7 +58,7 @@ export default function AdminPage() {
 const day = (iso: string) => iso.slice(0, 10);
 
 async function Accounts() {
-  const user = await requireUser('/app/admin');
+  const user = await requireAdminMfa('/app/admin');
   // The database functions refuse anyone who is not a platform administrator; they see "not found".
   const db = supabaseAdmin();
   const [accounts, reportList] = await Promise.all([db.rpc('admin_list_accounts', { p_actor: user.id }), db.rpc('admin_list_abuse_reports', { p_actor: user.id })]);
@@ -171,6 +171,7 @@ async function Accounts() {
                     <div className="mt-2 flex flex-col gap-5 rounded-md border border-hairline p-4">
                       <LimitsForm userId={r.account_id} documents={r.documents_per_day} people={r.people_per_day} trusted={r.is_trusted} />
                       <SuspendForm userId={r.account_id} who={who} suspended={suspended} />
+                      <ResetMfaForm userId={r.account_id} who={who} />
                     </div>
                   </details>
                 )}

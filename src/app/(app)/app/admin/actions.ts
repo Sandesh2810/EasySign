@@ -3,7 +3,7 @@
 // administrator (D-35); a non-administrator gets "not found", the same as for the page itself.
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { requireUser } from '@/lib/auth/session';
+import { requireAdminMfa } from '@/lib/auth/session';
 import { friendlyDbError } from '@/lib/request-guard';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
@@ -13,7 +13,7 @@ const uuid = z.uuid();
 
 /** Suspend an account (its open documents go on hold) or lift the suspension. */
 export async function setSuspensionAction(_prev: AdminResult | null, formData: FormData): Promise<AdminResult> {
-  const user = await requireUser('/app/admin');
+  const user = await requireAdminMfa('/app/admin');
   const target = uuid.safeParse(formData.get('user_id'));
   const suspend = formData.get('suspend') === '1';
   const reason = z.string().trim().max(500).safeParse(formData.get('reason') ?? '');
@@ -27,7 +27,7 @@ export async function setSuspensionAction(_prev: AdminResult | null, formData: F
 
 /** Daily limits and the "trusted" mark for one account. */
 export async function setLimitsAction(_prev: AdminResult | null, formData: FormData): Promise<AdminResult> {
-  const user = await requireUser('/app/admin');
+  const user = await requireAdminMfa('/app/admin');
   const parsed = z
     .object({ user_id: z.uuid(), documents: z.coerce.number().int().min(0).max(500), people: z.coerce.number().int().min(0).max(2000) })
     .safeParse({ user_id: formData.get('user_id'), documents: formData.get('documents'), people: formData.get('people') });
@@ -46,7 +46,7 @@ export async function setLimitsAction(_prev: AdminResult | null, formData: FormD
 
 /** Close an abuse report as handled or as nothing wrong. */
 export async function resolveReportAction(_prev: AdminResult | null, formData: FormData): Promise<AdminResult> {
-  const user = await requireUser('/app/admin');
+  const user = await requireAdminMfa('/app/admin');
   const parsed = z
     .object({ report_id: z.uuid(), outcome: z.enum(['actioned', 'dismissed']), note: z.string().trim().max(1000) })
     .safeParse({ report_id: formData.get('report_id'), outcome: formData.get('outcome'), note: formData.get('note') ?? '' });
@@ -58,7 +58,7 @@ export async function resolveReportAction(_prev: AdminResult | null, formData: F
 }
 
 export async function setApprovalAction(_prev: AdminResult | null, formData: FormData): Promise<AdminResult> {
-  const user = await requireUser('/app/admin');
+  const user = await requireAdminMfa('/app/admin');
   const target = z.uuid().safeParse(formData.get('user_id'));
   const approve = formData.get('approve') === '1';
   if (!target.success) return { ok: false, message: 'That request was not understood. Reload the page and try again.' };

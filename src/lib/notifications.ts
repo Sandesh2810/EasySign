@@ -87,6 +87,12 @@ export function describeNotification(kind: string, payload: unknown): NoticeView
       };
     case 'account_suspension_lifted':
       return { text: 'The suspension of your account has been lifted. Your open documents continue and you can send again.', path: null, tone: 'good' };
+    case 'mfa_reset':
+      return {
+        text: 'The administrator removed your two-step sign-in, as you asked. Set it up again now under Security. If you did not ask for this, contact the administrator straight away.',
+        path: '/app/account/security',
+        tone: 'attention',
+      };
     case 'account_approved':
       return { text: 'Your account was approved. You can now send documents to other people.', path: null, tone: 'good' };
     case 'account_approval_removed':

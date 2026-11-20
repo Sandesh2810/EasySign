@@ -97,6 +97,13 @@ async function Dashboard({ searchParams }: { searchParams: Promise<Search> }) {
           </Link>
         </div>
       </div>
+      {/* requireUser already sent anyone with an authenticator to the code page, so aal1 here means "not set up" */}
+      {user.aal !== 'aal2' ? (
+        <p className="rounded-md bg-surface px-4 py-3 text-sm text-ink-body shadow-soft">
+          Protect your account: switch on two-step sign-in, so a stolen password alone cannot open it.{' '}
+          <Link href="/app/account/security">Set it up</Link>
+        </p>
+      ) : null}
 
       {controls && !controls.approved ? (
         <Notice tone="info">

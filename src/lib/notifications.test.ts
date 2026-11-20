@@ -20,6 +20,7 @@ describe('in-app notices', () => {
       'envelope_expired',
       'consent_withdrawn',
       'paper_copy_requested',
+      'mfa_reset',
       'sealing_failed',
       'email_failed',
       'email_deferred',
