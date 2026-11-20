@@ -4,7 +4,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Notice } from '@/components/ui';
-import { FIELD_LABEL, type FieldType } from '@/lib/fields';
+import { checkFieldValue, FIELD_LABEL, INFO_ONLY, TYPED_TYPES, type FieldOptions, type FieldType } from '@/lib/fields';
+import { AttachmentField } from './attachment-field';
 import { approveAction, completeAction, fillFieldAction } from './actions';
 import { DeclineControl } from './decline';
 import { PaperCopyControl, WithdrawControl } from './paper-withdraw';
@@ -20,6 +21,8 @@ export interface RoomField {
   h: number;
   required: boolean;
   value: string;
+  /** choices, limits, note text, link, text check (D-78) */
+  options: FieldOptions;
 }
 interface Props {
   title: string;
@@ -44,7 +47,10 @@ const localDate = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 const noSubscribe = () => () => {};
-const isTyped = (t: FieldType) => t === 'company' || t === 'title' || t === 'text';
+const isTyped = (t: FieldType) => TYPED_TYPES.includes(t);
+/** Saved as soon as they change (a tick, a choice, a file), not when the field is left. */
+const isPicked = (t: FieldType) => t === 'checkbox' || t === 'radio' || t === 'dropdown' || t === 'attachment';
+const safeUrl = (u?: string) => (u && /^https?:\/\//i.test(u) ? u : null);
 
 export function SigningRoom({ title, senderLine, signer, fields, adopted, intentText, mode }: Props) {
   const router = useRouter();
@@ -53,6 +59,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
   const [width, setWidth] = useState(0);
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(fields.map((f) => [f.id, f.value])));
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** fields whose last value was refused, with the reason (shown and announced; aria-invalid on the field) */
+  const [invalid, setInvalid] = useState<Record<string, string>>({});
   const [images, setImages] = useState<{ signature: string | null; initials: string | null }>({
     signature: adopted.signature ? '/api/sign/document?part=signature' : null,
     initials: adopted.initials ? '/api/sign/document?part=initials' : null,
@@ -140,23 +148,46 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
     (f: RoomField) => {
       if (f.type === 'signature') return images.signature !== null;
       if (f.type === 'initials') return images.initials !== null;
-      if (isTyped(f.type)) return (values[f.id] ?? '').trim().length > 0;
-      return true; // date, name and email are filled in automatically
+      if (f.type === 'checkbox') return values[f.id] === 'true';
+      if (isTyped(f.type) || isPicked(f.type)) return (values[f.id] ?? '').trim().length > 0;
+      return true; // date, name and email are filled in automatically; notes and links are only shown
     },
     [images, values],
   );
-  const required = useMemo(() => fields.filter((f) => f.required || f.type === 'signature' || f.type === 'initials'), [fields]);
+  const required = useMemo(
+    () => fields.filter((f) => !INFO_ONLY.includes(f.type) && (f.required || f.type === 'signature' || f.type === 'initials')),
+    [fields],
+  );
   const remaining = useMemo(() => required.filter((f) => !isDone(f)), [required, isDone]);
   const doneCount = required.length - remaining.length;
 
-  const saveValue = async (f: RoomField) => {
-    const value = (values[f.id] ?? '').trim();
+  const saveValue = async (f: RoomField, override?: string) => {
+    const value = (override ?? values[f.id] ?? '').trim();
     if (saved.current[f.id] === value) return;
+    // checked here first so the signer sees the sender's own message at once; the server checks it again
+    const problem = checkFieldValue(f.type, f.options ?? {}, value);
+    if (problem) {
+      setInvalid((m) => ({ ...m, [f.id]: problem }));
+      setSaveError(`${FIELD_LABEL[f.type]}: ${problem}`);
+      return;
+    }
     const res = await fillFieldAction(f.id, value).catch(() => ({ ok: false as const, message: 'We could not reach the server. Your last entry is not saved yet.' }));
     if (res.ok) {
       saved.current[f.id] = value;
       setSaveError(null);
-    } else setSaveError(res.message);
+      setInvalid((m) => {
+        const { [f.id]: _gone, ...rest } = m;
+        void _gone;
+        return rest;
+      });
+    } else {
+      setInvalid((m) => ({ ...m, [f.id]: res.message }));
+      setSaveError(res.message);
+    }
+  };
+  const pick = (f: RoomField, value: string) => {
+    setValues((v) => ({ ...v, [f.id]: value }));
+    void saveValue(f, value);
   };
 
   const goNext = (skip?: string) => {
@@ -314,6 +345,106 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                       </button>
                     );
                   }
+                  const need = f.required ? ' (required)' : ' (optional)';
+                  const filled = (values[f.id] ?? '').trim() !== '';
+                  if (f.type === 'checkbox') {
+                    return (
+                      <input
+                        key={f.id}
+                        type="checkbox"
+                        ref={(el) => {
+                          targets.current[f.id] = el;
+                        }}
+                        aria-label={`Checkbox${need}`}
+                        checked={values[f.id] === 'true'}
+                        onChange={(e) => pick(f, e.target.checked ? 'true' : '')}
+                        style={{ ...box, margin: 0 }}
+                        className="absolute accent-[#141414] focus-visible:outline-4"
+                      />
+                    );
+                  }
+                  if (f.type === 'radio') {
+                    const choices = f.options?.choices ?? [];
+                    return (
+                      <fieldset key={f.id} style={{ ...box, color: '#141414', fontSize: Math.min(fontSize, 13), backgroundColor: filled ? '#ffffff' : '#fff3bf' }} className="absolute m-0 flex flex-col justify-center gap-0.5 overflow-auto rounded-sm border-2 border-[#141414] px-1">
+                        <legend className="sr-only">Choose one{need}</legend>
+                        {choices.map((c, i) => (
+                          <label key={c} className="flex min-h-6 items-center gap-1.5 leading-tight">
+                            <input
+                              type="radio"
+                              name={`radio-${f.id}`}
+                              value={c}
+                              checked={values[f.id] === c}
+                              onChange={() => pick(f, c)}
+                              ref={(el) => {
+                                if (i === 0) targets.current[f.id] = el;
+                              }}
+                              className="m-0 size-6 shrink-0 accent-[#141414] focus-visible:outline-4"
+                            />
+                            {c}
+                          </label>
+                        ))}
+                      </fieldset>
+                    );
+                  }
+                  if (f.type === 'dropdown') {
+                    return (
+                      <select
+                        key={f.id}
+                        ref={(el) => {
+                          targets.current[f.id] = el;
+                        }}
+                        aria-label={`Dropdown${need}`}
+                        value={values[f.id] ?? ''}
+                        onChange={(e) => pick(f, e.target.value)}
+                        style={{ ...box, color: '#141414', fontSize, backgroundColor: filled ? '#ffffff' : '#fff3bf' }}
+                        className="absolute rounded-sm border-2 border-[#141414] px-1 focus-visible:outline-4"
+                      >
+                        <option value="">Choose…</option>
+                        {(f.options?.choices ?? []).map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    );
+                  }
+                  if (f.type === 'note') {
+                    return (
+                      <div key={f.id} role="note" style={{ ...box, color: '#141414', fontSize: Math.min(fontSize, 12) }} className="absolute overflow-auto rounded-sm border border-[#5a5a5a] bg-white px-1 leading-snug">
+                        {f.options?.text}
+                      </div>
+                    );
+                  }
+                  if (f.type === 'hyperlink') {
+                    const url = safeUrl(f.options?.url);
+                    return url ? (
+                      <a key={f.id} href={url} target="_blank" rel="noopener noreferrer" style={{ ...box, fontSize }} className="absolute flex items-center overflow-hidden whitespace-nowrap rounded-sm px-1 text-[#1d4ed8] underline">
+                        {f.options?.label || url}
+                        <span className="sr-only"> (opens in a new tab)</span>
+                      </a>
+                    ) : null;
+                  }
+                  if (f.type === 'attachment') {
+                    return (
+                      <AttachmentField
+                        key={f.id}
+                        fieldId={f.id}
+                        required={f.required}
+                        value={values[f.id] ?? ''}
+                        style={{ ...box, fontSize: Math.min(fontSize, 13) }}
+                        setTarget={(el) => {
+                          targets.current[f.id] = el;
+                        }}
+                        onSaved={(value) => {
+                          saved.current[f.id] = value;
+                          setValues((v) => ({ ...v, [f.id]: value }));
+                          setSaveError(null);
+                        }}
+                        onError={setSaveError}
+                      />
+                    );
+                  }
                   if (isTyped(f.type)) {
                     return (
                       <input
@@ -321,7 +452,9 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         ref={(el) => {
                           targets.current[f.id] = el;
                         }}
-                        aria-label={`${FIELD_LABEL[f.type]}${f.required ? ' (required)' : ' (optional)'}`}
+                        aria-label={`${FIELD_LABEL[f.type]}${need}`}
+                        aria-invalid={invalid[f.id] ? true : undefined}
+                        inputMode={f.type === 'number' ? 'decimal' : undefined}
                         placeholder={FIELD_LABEL[f.type]}
                         value={values[f.id] ?? ''}
                         maxLength={500}
@@ -366,6 +499,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                 <input
                   id="phone-entry"
                   autoFocus
+                  inputMode={f.type === "number" ? "decimal" : undefined}
                   value={values[f.id] ?? ''}
                   maxLength={500}
                   onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}

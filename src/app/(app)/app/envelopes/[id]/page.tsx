@@ -8,7 +8,7 @@ import { loadLinkLocks, type LinkLock } from "@/lib/signing/locks";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { Button, Notice } from "@/components/ui";
 import { StatusChip } from "@/components/status-chip";
-import type { FieldType } from "@/lib/fields";
+import type { FieldOptions, FieldType } from "@/lib/fields";
 import {
   progressLabel,
   ROLE_LABEL,
@@ -94,7 +94,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
       .order("created_at"),
     supabase
       .from("fields")
-      .select("id, recipient_id, type, page, x, y, w, h, required, locked")
+      .select("id, recipient_id, type, page, x, y, w, h, required, locked, options")
       .eq("envelope_id", id.data),
     supabase
       .from("profiles")
@@ -117,6 +117,12 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
       .order("created_at"),
   ]);
   if (!env) notFound(); // row-level security: someone else's document does not exist for this user
+  // files signers attached (D-78); read through the person's own session, like everything else here
+  const { data: attachmentRows } = await supabase
+    .from("field_attachments")
+    .select("field_id, recipient_id, file_name, kind, size_bytes, sha256")
+    .eq("envelope_id", id.data)
+    .order("created_at");
   const doc = docs?.[0];
   const recipients = (recipientRows ?? []) as RecipientRow[];
   const signers = recipients
@@ -196,6 +202,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     h: Number(f.h),
     required: Boolean(f.required),
     locked: Boolean(f.locked),
+    options: (f.options ?? {}) as FieldOptions,
   }));
   const editable: EditableRecipient[] = recipients
     .filter((r) => r.role !== "in_person")
@@ -558,6 +565,27 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
             Delete this draft
           </Button>
         </form>
+      ) : null}
+      {attachmentRows && attachmentRows.length > 0 && !env.deleted_at ? (
+        <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="attachments-heading">
+          <h2 id="attachments-heading" className="mb-3 text-base font-medium text-ink">
+            Files attached by signers
+          </h2>
+          <ul className="flex flex-col gap-2">
+            {attachmentRows.map((a) => (
+              <li key={a.field_id as string} className="text-base text-ink [overflow-wrap:anywhere]">
+                <a href={`/api/envelopes/${env.id}/attachments/${a.field_id}`} download>
+                  {a.file_name as string}
+                </a>
+                <span className="text-sm text-ink-muted">
+                  {" "}
+                  · {recipients.find((r) => r.id === a.recipient_id)?.name ?? "a signer"} · {Math.max(1, Math.round(Number(a.size_bytes) / 1024))} KB · SHA-256{" "}
+                  {String(a.sha256).slice(0, 16)}…
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
       {doc && !viewOnly && !env.deleted_at && recipients.some((r) => ["signer", "approver", "cc", "in_person"].includes(r.role)) ? (
         <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="template-heading">

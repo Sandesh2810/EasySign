@@ -85,7 +85,7 @@ async function prepare() {
   if (membership.error) throw new Error(`membership: ${membership.error.message}`);
   const orgId = membership.data.org_id;
 
-  const makeEnvelope = async (title, people, withText = false) => {
+  const makeEnvelope = async (title, people, withText = false, withNewTypes = false) => {
     const env = await rpc(db, 'create_envelope', { p_actor: sender.id, p_org_id: orgId, p_title: title, p_folder_id: null });
     const bytes = await makePdf(title);
     const storagePath = `${orgId}/${env.id}/doc1.pdf`;
@@ -100,6 +100,16 @@ async function prepare() {
       { document_id: doc.id, recipient_id: r.id, type: 'signature', page: 1, x: 0.12, y: 0.55 + i * 0.15, w: 0.35, h: 0.07 },
       { document_id: doc.id, recipient_id: r.id, type: 'date_signed', page: 1, x: 0.55, y: 0.57 + i * 0.15, w: 0.25, h: 0.04 },
       ...(withText ? [{ document_id: doc.id, recipient_id: r.id, type: 'text', page: 1, x: 0.12, y: 0.45 + i * 0.15, w: 0.4, h: 0.04, required: true }] : []),
+      // Phase 4 slice 3 (D-78): every new type, optional so the signing flow below is unchanged
+      ...(withNewTypes ? [
+        { document_id: doc.id, recipient_id: r.id, type: 'checkbox', page: 1, x: 0.12, y: 0.12, w: 0.03, h: 0.022, required: false },
+        { document_id: doc.id, recipient_id: r.id, type: 'radio', page: 1, x: 0.2, y: 0.12, w: 0.3, h: 0.08, required: false, options: { choices: ['Monthly', 'Yearly'] } },
+        { document_id: doc.id, recipient_id: r.id, type: 'dropdown', page: 1, x: 0.55, y: 0.12, w: 0.3, h: 0.035, required: false, options: { choices: ['Red', 'Green'] } },
+        { document_id: doc.id, recipient_id: r.id, type: 'number', page: 1, x: 0.12, y: 0.24, w: 0.2, h: 0.035, required: false, options: { min: 0, max: 100 } },
+        { document_id: doc.id, recipient_id: r.id, type: 'note', page: 1, x: 0.4, y: 0.24, w: 0.45, h: 0.05, options: { text: 'Please read the terms before signing.' } },
+        { document_id: doc.id, recipient_id: r.id, type: 'hyperlink', page: 1, x: 0.12, y: 0.32, w: 0.3, h: 0.03, options: { url: 'https://example.com/terms', label: 'Our terms' } },
+        { document_id: doc.id, recipient_id: r.id, type: 'attachment', page: 1, x: 0.5, y: 0.32, w: 0.35, h: 0.04, required: false },
+      ] : []),
     ]);
     await rpc(db, 'save_fields', { p_actor: sender.id, p_envelope_id: env.id, p_fields: fields });
     return { id: env.id, recipients: saved, storagePath };
@@ -129,7 +139,7 @@ async function prepare() {
     });
     return token;
   };
-  const sent = await makeEnvelope('Accessibility check (signing)', [SIGNER]);
+  const sent = await makeEnvelope('Accessibility check (signing)', [SIGNER], false, true);
   const token = await sendWithLink(sent);
   const keyboardOnly = await makeEnvelope('Accessibility check (keyboard only)', [{ name: 'Kim Keys', email: 'a11y-keys@example.test' }], true);
   const keyboardToken = await sendWithLink(keyboardOnly);

@@ -14,7 +14,7 @@ describe('field validation', () => {
   });
   it('rejects unknown types, bad ids, and geometry outside the page', () => {
     for (const bad of [
-      { ...base, type: 'checkbox' },
+      { ...base, type: 'javascript' }, // (was 'checkbox', a real type since Phase 4 slice 3)
       { ...base, document_id: 'nope' },
       { ...base, page: 0 },
       { ...base, x: -0.01 },

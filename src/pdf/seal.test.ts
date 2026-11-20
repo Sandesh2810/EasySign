@@ -196,3 +196,49 @@ describe('buildSealedPdf', () => {
     await expect(buildSealedPdf({ ...base, envelope: { ...base.envelope, originalSha256: 'cd'.repeat(32) } })).rejects.toThrow(/hash/i);
   });
 });
+
+// Phase 4 slice 3 (D-78): tick boxes and notes, on an upright and on rotated pages
+describe('buildSealedPdf: checkbox and note fields', () => {
+  const NOTE = 'Payment is due within thirty days of the invoice date. Late payments carry interest at the statutory rate, compounded monthly until paid in full.';
+  let original: Uint8Array;
+  beforeAll(async () => {
+    original = await makeContractFixture();
+  });
+
+  it('prints a wrapped note inside its field and a link as its label and address', async () => {
+    const base = await input(original);
+    const out = await buildSealedPdf({
+      ...base,
+      fields: [
+        ...base.fields,
+        { page: 1, rect: { x: 0.1, y: 0.2, w: 0.4, h: 0.08 }, kind: 'note', text: NOTE },
+        { page: 3, rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.1 }, kind: 'note', text: 'Rotated page note' },
+        { page: 1, rect: { x: 0.1, y: 0.3, w: 0.6, h: 0.03 }, kind: 'text', text: 'Our terms (https://example.com/terms)' },
+      ],
+    });
+    const pages = await extractText(out.sealed);
+    expect(pages[0].text).toContain('Payment is due within thirty days');
+    expect(pages[0].text).toContain('Our terms (https://example.com/terms)');
+    expect(pages[2].text).toContain('Rotated page note');
+    // every line of the note starts inside the field's box (page 1 is 612 x 792 pt, upright):
+    // x from 0.1 to 0.5 of the width, y from 0.2 to 0.28 of the height measured from the top
+    const noteRuns = pages[0].items.filter((i) => /Payment|Late|payments|compounded|monthly|interest|statutory/.test(i.str));
+    expect(noteRuns.length).toBeGreaterThan(1); // it wrapped onto more than one line
+    for (const run of noteRuns) {
+      expect(run.x).toBeGreaterThanOrEqual(612 * 0.1 - 0.5);
+      expect(run.x).toBeLessThanOrEqual(612 * 0.5);
+      expect(run.y).toBeGreaterThanOrEqual(792 * (1 - 0.28) - 0.5);
+      expect(run.y).toBeLessThanOrEqual(792 * (1 - 0.2));
+    }
+  });
+
+  it('draws a tick box ticked or empty on every page orientation, and a long note never fails', async () => {
+    const base = await input(original);
+    const ticked = await buildSealedPdf({ ...base, fields: [...base.fields, ...[1, 3, 5].map((page) => ({ page, rect: { x: 0.4, y: 0.4, w: 0.03, h: 0.02 }, kind: 'check' as const, checked: true }))] });
+    const empty = await buildSealedPdf({ ...base, fields: [...base.fields, ...[1, 3, 5].map((page) => ({ page, rect: { x: 0.4, y: 0.4, w: 0.03, h: 0.02 }, kind: 'check' as const, checked: false }))] });
+    expect(sha(ticked.sealed)).not.toBe(sha(empty.sealed));
+    expect(ticked.warnings.length).toBe(empty.warnings.length);
+    const tiny = await buildSealedPdf({ ...base, fields: [...base.fields, { page: 4, rect: { x: 0.1, y: 0.1, w: 0.05, h: 0.01 }, kind: 'note', text: `${NOTE} ${'Supercalifragilisticexpialidocious'.repeat(5)}` }] });
+    expect(tiny.sealed.length).toBeGreaterThan(0);
+  });
+});

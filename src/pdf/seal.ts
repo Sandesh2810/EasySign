@@ -40,7 +40,10 @@ export interface SealRecipient {
 
 export type SealField =
   | { page: number; rect: FracRect; kind: 'signature' | 'initials'; imagePng: Uint8Array; signerName: string; signedAtUtc: Date; signatureId: string }
-  | { page: number; rect: FracRect; kind: 'text'; text: string };
+  | { page: number; rect: FracRect; kind: 'text'; text: string }
+  // Phase 4 slice 3 (D-78): a tick box (drawn as a square, with an X when ticked) and a wrapped note
+  | { page: number; rect: FracRect; kind: 'check'; checked: boolean }
+  | { page: number; rect: FracRect; kind: 'note'; text: string };
 
 export interface SealInput {
   original: Uint8Array;
@@ -141,6 +144,9 @@ function frame(page: PDFPage, r: PdfRect) {
     rect(lx: number, ly: number, width: number, height: number, color: Color) {
       page.drawRectangle({ ...pt(lx, ly), width, height, color, rotate, borderWidth: 0 });
     },
+    line(x1: number, y1: number, x2: number, y2: number, thickness: number, color: Color = INK) {
+      page.drawLine({ start: pt(x1, y1), end: pt(x2, y2), thickness, color });
+    },
   };
 }
 
@@ -226,6 +232,65 @@ function drawTextField(page: PDFPage, box: PageBox, f: Extract<SealField, { kind
     str = `${str}…`;
   }
   fr.text(str, 1, Math.max(0, (fr.h - size) / 2) + size * 0.2, size, fonts.regular, INK);
+}
+
+/** A square in the middle of the field; an X across it when ticked. */
+function drawCheck(page: PDFPage, box: PageBox, f: Extract<SealField, { kind: 'check' }>) {
+  const fr = frame(page, rectToPdf(box, f.rect));
+  const s = Math.max(4, Math.min(fr.w, fr.h) - 1);
+  const x = (fr.w - s) / 2;
+  const y = (fr.h - s) / 2;
+  const t = Math.max(0.5, s * 0.06);
+  fr.line(x, y, x + s, y, t);
+  fr.line(x + s, y, x + s, y + s, t);
+  fr.line(x + s, y + s, x, y + s, t);
+  fr.line(x, y + s, x, y, t);
+  if (f.checked) {
+    const m = s * 0.2;
+    fr.line(x + m, y + m, x + s - m, y + s - m, t * 2);
+    fr.line(x + m, y + s - m, x + s - m, y + m, t * 2);
+  }
+}
+
+/** Word-wrapped text that stays inside the field: the largest size (10 pt down to 4 pt) at which it fits, else cut with "…". */
+function drawNote(page: PDFPage, box: PageBox, f: Extract<SealField, { kind: 'note' }>, fonts: Fonts) {
+  const fr = frame(page, rectToPdf(box, f.rect));
+  const words = fonts.safe(f.text).replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (!words.length) return;
+  const LEAD = 1.2;
+  const wrap = (size: number) => {
+    const lines: string[] = [];
+    let cur = '';
+    for (const w of words) {
+      const next = cur ? `${cur} ${w}` : w;
+      if (fonts.regular.widthOfTextAtSize(next, size) <= fr.w - 2 || !cur) cur = next;
+      else {
+        lines.push(cur);
+        cur = w;
+      }
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  };
+  let size = Math.min(10, Math.max(4, fr.h * 0.6));
+  let lines = wrap(size);
+  while (size > 4 && lines.length * size * LEAD > fr.h) {
+    size = Math.max(4, size - 0.5);
+    lines = wrap(size);
+  }
+  const fit = Math.max(1, Math.floor(fr.h / (size * LEAD)));
+  if (lines.length > fit) {
+    lines = lines.slice(0, fit);
+    let last = lines[fit - 1];
+    while (last.length > 1 && fonts.regular.widthOfTextAtSize(`${last}…`, size) > fr.w - 2) last = last.slice(0, -1);
+    lines[fit - 1] = `${last}…`;
+  }
+  lines.forEach((line, i) => {
+    // a single word wider than the field is cut too, so nothing ever runs over the document's own text
+    let l = line;
+    while (l.length > 1 && fonts.regular.widthOfTextAtSize(l, size) > fr.w - 2) l = l.slice(0, -1);
+    fr.text(l, 1, fr.h - (i + 1) * size * LEAD + size * 0.2, size, fonts.regular, INK);
+  });
 }
 
 interface Qr {
@@ -455,6 +520,10 @@ export async function buildSealedPdf(input: SealInput): Promise<SealOutput> {
     const box = boxes[f.page - 1];
     if (f.kind === 'text') {
       drawTextField(page, box, f, fonts);
+    } else if (f.kind === 'check') {
+      drawCheck(page, box, f);
+    } else if (f.kind === 'note') {
+      drawNote(page, box, f, fonts);
     } else {
       let img = images.get(f.imagePng);
       if (!img) {

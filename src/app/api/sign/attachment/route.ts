@@ -1,0 +1,63 @@
+// POST /api/sign/attachment  (multipart: field_id, file)  — a signer attaches a file to an attachment field (D-78).
+// Signer session only; PDF, PNG or JPG recognised by content (not by name), up to 5 MB; stored under the document's own
+// folder in the attachments store; the database checks the field, the person and the path again (signer_attach).
+// A replaced file is removed. Nothing is ever served back to the signer from here.
+import { createHash, randomUUID } from 'node:crypto';
+import type { NextRequest } from 'next/server';
+import { allow, TOO_MANY } from '@/lib/rate-limit';
+import { friendlyDbError, isSameOrigin, json } from '@/lib/request-guard';
+import { loadSignerContext, requestEvidence } from '@/lib/signing/session';
+import { supabaseAdmin } from '@/lib/supabase/admin';
+import { sniffUpload } from '@/pdf/image-to-pdf';
+import { getStorage } from '@/storage';
+
+const MAX_BYTES = 5 * 1024 * 1024;
+const EXT = { pdf: 'pdf', png: 'png', jpeg: 'jpg' } as const;
+const TYPE = { pdf: 'application/pdf', png: 'image/png', jpeg: 'image/jpeg' } as const;
+
+export async function POST(request: NextRequest) {
+  if (!isSameOrigin(request)) return json(403, { error: 'This request did not come from YouNMeSign.' });
+  const ctx = await loadSignerContext();
+  if (!ctx) return json(401, { error: 'Open your signing link again.' });
+  if (ctx.onHold) return json(423, { error: 'This document is on hold and cannot be changed right now.' });
+  if (!(await allow({ bucket: 'sign_attach', limit: 30, windowSeconds: 3600 }, ctx.tokenId))) return json(429, { error: TOO_MANY });
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_BYTES + 256 * 1024) return json(413, { error: 'Files can be up to 5 MB.' });
+
+  let fieldId = '';
+  let file: File | null = null;
+  try {
+    const form = await request.formData();
+    fieldId = String(form.get('field_id') ?? '');
+    const f = form.get('file');
+    if (f instanceof File) file = f;
+  } catch {
+    return json(400, { error: 'The file could not be read. Try again.' });
+  }
+  if (!/^[0-9a-f-]{36}$/.test(fieldId) || !file || file.size === 0) return json(400, { error: 'Choose a file to attach.' });
+  if (file.size > MAX_BYTES) return json(413, { error: 'Files can be up to 5 MB.' });
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const kind = sniffUpload(bytes);
+  if (!kind) return json(415, { error: 'Attach a PDF, PNG or JPG file.' });
+
+  const env = ctx.envelope as { id: string; org_id: string };
+  const path = `${env.org_id}/${env.id}/att-${randomUUID()}.${EXT[kind]}`;
+  const store = getStorage();
+  try {
+    await store.put('attachments', path, bytes, { contentType: TYPE[kind] });
+  } catch {
+    return json(502, { error: 'The file could not be stored. Try again.' });
+  }
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  const name = (file.name || `attachment.${EXT[kind]}`).replace(/^.*[\\/]/, '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200);
+  const { ip, ua } = await requestEvidence();
+  const { data: old, error } = await supabaseAdmin().rpc('signer_attach', {
+    p_token_id: ctx.tokenId, p_field_id: fieldId, p_storage_backend: store.backend, p_storage_path: path, p_file_name: name,
+    p_kind: kind, p_size_bytes: bytes.length, p_sha256: sha, p_ip: ip, p_user_agent: ua,
+  });
+  if (error) {
+    await store.remove('attachments', path).catch(() => {});
+    return json(400, { error: friendlyDbError(error.message).message });
+  }
+  if (typeof old === 'string' && old) await store.remove('attachments', old).catch(() => {}); // the file it replaced
+  return json(200, { ok: true, value: `${name.slice(0, 120)} · SHA-256 ${sha.slice(0, 16)}` });
+}

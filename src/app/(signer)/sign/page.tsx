@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { APPROVE_TEXT, CONSENT_PARAGRAPHS, INTENT_TEXT } from '@/config/legal';
-import type { FieldType } from '@/lib/fields';
+import type { FieldOptions, FieldType } from '@/lib/fields';
 import { maskEmail } from '@/lib/access-code';
 import { lockedMessage } from '@/lib/signing/gate-text';
 import { loadSignerContext } from '@/lib/signing/session';
@@ -169,7 +169,7 @@ async function Sign() {
   }
 
   const [{ data: fields }, { data: values }, { data: assets }] = await Promise.all([
-    admin.from('fields').select('id, type, page, x, y, w, h, required').eq('recipient_id', recipient.id).order('page').order('y').order('x'),
+    admin.from('fields').select('id, type, page, x, y, w, h, required, options').eq('recipient_id', recipient.id).order('page').order('y').order('x'),
     admin.from('field_values').select('field_id, value_text').eq('recipient_id', recipient.id),
     admin.from('signature_assets').select('kind').eq('recipient_id', recipient.id),
   ]);
@@ -184,6 +184,7 @@ async function Sign() {
     h: Number(f.h),
     required: Boolean(f.required),
     value: valueOf.get(f.id as string) ?? '',
+    options: (f.options ?? {}) as FieldOptions,
   }));
   const kinds = new Set((assets ?? []).map((a) => a.kind as string));
 

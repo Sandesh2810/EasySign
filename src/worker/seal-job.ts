@@ -32,7 +32,7 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
   const envelope = await must(db.from('envelopes').select('id, org_id, title, public_code, sender_id, delivery').eq('id', id).maybeSingle(), 'the envelope');
   const doc = await must(db.from('envelope_documents').select('storage_backend, storage_path, sha256').eq('envelope_id', id).order('position').limit(1).maybeSingle(), 'the document');
   const recipients = await must(db.from('recipients').select('id, name, email, role, routing_order, auth_method, sent_at, viewed_at, consented_at, completed_at').eq('envelope_id', id).order('routing_order'), 'the recipients');
-  const fields = await must(db.from('fields').select('id, recipient_id, type, page, x, y, w, h').eq('envelope_id', id), 'the fields');
+  const fields = await must(db.from('fields').select('id, recipient_id, type, page, x, y, w, h, options').eq('envelope_id', id), 'the fields');
   const values = await must(db.from('field_values').select('field_id, value_text, signature_asset_id, signature_id').eq('envelope_id', id), 'the field values');
   const consents = await must(db.from('consents').select('recipient_id, disclosure_version, ip, user_agent, given_at').eq('envelope_id', id).is('withdrawn_at', null).order('given_at'), 'the consent records');
   const recipientIds = recipients.map((r) => r.id as string);
@@ -63,7 +63,17 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
         images.set(asset.id as string, png);
       }
       sealFields.push({ page: f.page as number, rect, kind: f.type, imagePng: png, signerName: who.name as string, signedAtUtc: new Date(who.completed_at as string), signatureId: v.signature_id as string });
+    } else if (f.type === 'checkbox') {
+      // always drawn, so an unticked box is visibly unticked on the signed copy (D-78)
+      sealFields.push({ page: f.page as number, rect, kind: 'check', checked: v?.value_text === 'true' });
+    } else if (f.type === 'note') {
+      const text = String((f.options as { text?: string } | null)?.text ?? '').trim();
+      if (text) sealFields.push({ page: f.page as number, rect, kind: 'note', text });
+    } else if (f.type === 'hyperlink') {
+      const o = (f.options ?? {}) as { url?: string; label?: string };
+      if (o.url) sealFields.push({ page: f.page as number, rect, kind: 'text', text: o.label ? `${o.label} (${o.url})` : o.url });
     } else if (v?.value_text) {
+      // text, number, a choice, a dropdown value, an attachment's name and fingerprint, and the automatic ones
       sealFields.push({ page: f.page as number, rect, kind: 'text', text: v.value_text as string });
     }
   }

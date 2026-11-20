@@ -4,7 +4,8 @@
 // they are independent of zoom and screen size. This is part of the neutral signing surface: plain
 // colours, no decoration.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { clampRect, FIELD_DEFAULT_SIZE, FIELD_LABEL, FIELD_TYPES, type FieldType } from '@/lib/fields';
+import { clampRect, FIELD_DEFAULT_SIZE, FIELD_LABEL, FIELD_TYPES, fieldOptionsProblem, type FieldOptions, type FieldType } from '@/lib/fields';
+import { FieldSettings, defaultOptions } from './field-settings';
 import { saveFieldsAction } from '../actions';
 
 export interface EditorField {
@@ -20,6 +21,8 @@ export interface EditorField {
   required: boolean;
   /** fixed by the template it came from: cannot be moved, resized or removed (the database refuses it too, D-77) */
   locked?: boolean;
+  /** choices, limits, note text, link, text check (D-78) */
+  options?: FieldOptions;
 }
 
 interface PageInfo {
@@ -173,7 +176,7 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
     const timer = setTimeout(async () => {
       setSave('saving');
       const snapshot = fields;
-      const payload = snapshot.map((f) => ({ document_id: documentId, recipient_id: f.recipientId, type: f.type, page: f.page, x: f.x, y: f.y, w: f.w, h: f.h, required: f.required }));
+      const payload = snapshot.map((f) => ({ document_id: documentId, recipient_id: f.recipientId, type: f.type, page: f.page, x: f.x, y: f.y, w: f.w, h: f.h, required: f.required, options: f.options ?? {} }));
       const res = await saveFieldsAction(envelopeId, payload).catch(() => ({ ok: false as const, message: 'Could not reach the server. Your changes are not saved yet.' }));
       setFields((current) => {
         // if the user kept editing while we saved, stay dirty so the newer layout is saved too
@@ -201,7 +204,7 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
     const w = size.w / pages[pageIndex].width;
     const h = size.h / pages[pageIndex].height;
     const r = clampRect({ x: cx - w / 2, y: cy - h / 2, w, h });
-    const f: EditorField = { key: newKey(), recipientId: activeSigner, type: tool, page: pageIndex + 1, required: true, ...r };
+    const f: EditorField = { key: newKey(), recipientId: activeSigner, type: tool, page: pageIndex + 1, required: tool !== 'note' && tool !== 'hyperlink', options: defaultOptions(tool), ...r };
     commit([...fields, f]);
     setSelected(f.key);
     setTool(null);
@@ -415,6 +418,14 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
                 >
                   Remove
                 </button>
+                <div className="basis-full">
+                  <FieldSettings
+                    key={sel.key}
+                    field={sel}
+                    problem={fieldOptionsProblem(sel.type, sel.options ?? {})}
+                    onChange={(patch) => commit(fields.map((x) => (x.key === sel.key ? { ...x, ...patch } : x)))}
+                  />
+                </div>
               </>
             ) : null}
           </>
