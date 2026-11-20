@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Hanken_Grotesk, EB_Garamond } from "next/font/google";
+import { connection } from "next/server";
 import { PRODUCT_NAME } from "@/config/brand";
 import "./globals.css";
 
@@ -19,7 +20,12 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// Every page is rendered for its own request (D-70): Next.js can only put the per-response nonce of the
+// Content-Security-Policy on scripts of pages it renders at request time, never on pages built in advance.
+export const instant = false;
+
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  await connection();
   return (
     <html lang="en" className={`${hanken.variable} ${garamond.variable}`}>
       <body>{children}</body>

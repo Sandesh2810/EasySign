@@ -4,10 +4,12 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { env } from '@/lib/env';
+import { authCookieOptions } from './cookie-options';
 
 export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
   return createServerClient(env.supabaseUrl(), env.supabasePublishableKey(), {
+    cookieOptions: authCookieOptions(env.appUrl()),
     cookies: {
       getAll: () => cookieStore.getAll(),
       setAll(cookiesToSet) {
