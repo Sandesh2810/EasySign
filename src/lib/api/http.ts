@@ -13,7 +13,8 @@ export interface ApiContext {
   scopes: ApiScope[];
 }
 
-export const API_RATE = { limit: 60, windowSeconds: 60 } as const;
+export { API_RATE } from './limits';
+import { API_RATE } from './limits';
 const BAD_KEY_RATE = { bucket: 'api_bad_key_ip', limit: 30, windowSeconds: 600 } as const;
 
 const HEADERS = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };

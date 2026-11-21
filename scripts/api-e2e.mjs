@@ -174,7 +174,10 @@ async function main() {
 
     // ---------- rate limit and revocation ----------
     const { data: readerRow } = await db.from('api_keys').select('id').eq('key_sha256', createHash('sha256').update(reader).digest('hex')).single();
-    for (let i = 0; i < 60; i++) await rpc(db, 'rate_limit_hit', { p_bucket: 'api_key', p_key: readerRow.id, p_limit: 60, p_window_seconds: 60 });
+    // the limit counts per clock minute: fill it all at once, early enough in a minute that the next request is in the same one
+    const intoMinute = (Date.now() / 1000) % 60;
+    if (intoMinute > 45) await sleep((61 - intoMinute) * 1000);
+    await Promise.all(Array.from({ length: 60 }, () => rpc(db, 'rate_limit_hit', { p_bucket: 'api_key', p_key: readerRow.id, p_limit: 60, p_window_seconds: 60 })));
     const limited = await api(reader, 'GET', `/api/v1/documents/${id}`);
     const retry = Number(limited.headers.get('retry-after'));
     check('too many requests get 429 with Retry-After', limited.status === 429 && retry >= 1 && retry <= 60, `status=${limited.status} retry-after=${retry}`);

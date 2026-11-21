@@ -1,7 +1,8 @@
 // D-90: what the API does with documents, as the key's creator. Every step goes through the same database functions
 // as the app (which check access and limits again). Server-only.
 import 'server-only';
-import { z } from 'zod';
+import type { z } from 'zod';
+import { createInput, sendInput } from './schemas';
 import { friendlyDbError } from '@/lib/db-error';
 import { sendProblems, toLogicFields } from '@/lib/form-logic';
 import { byteaToBuffer, mintTokenRecord, signingLink } from '@/lib/signing/links';
@@ -10,6 +11,8 @@ import { draftFromTemplate, TemplateUseError } from '@/lib/template-use';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
 import type { ApiContext } from './http';
+
+export { createInput, sendInput };
 
 export class ApiFailure extends Error {
   constructor(
@@ -49,15 +52,6 @@ export async function listTemplates(ctx: ApiContext): Promise<unknown[]> {
   }));
 }
 
-export const createInput = z.object({
-  template_id: z.uuid(),
-  title: z.string().trim().min(1).max(200).optional(),
-  people: z
-    .array(z.object({ role: z.string().trim().min(1).max(120), name: z.string().trim().min(1).max(120), email: z.string().trim().toLowerCase().max(254).pipe(z.email()) }))
-    .min(1)
-    .max(50),
-});
-
 /** A new draft from a template; each person names a role by its id or its label. */
 export async function createFromTemplate(ctx: ApiContext, input: z.infer<typeof createInput>): Promise<Record<string, unknown>> {
   const admin = supabaseAdmin();
@@ -79,11 +73,6 @@ export async function createFromTemplate(ctx: ApiContext, input: z.infer<typeof 
   }
   return viewDocument(ctx, id);
 }
-
-export const sendInput = z.object({
-  delivery: z.enum(['email', 'link']),
-  expires_in_days: z.union([z.literal(7), z.literal(14), z.literal(30), z.literal(60)]).default(30),
-});
 
 /**
  * Sends a draft, with the same checks as the app's send step (formulas and conditions in full; the database checks
