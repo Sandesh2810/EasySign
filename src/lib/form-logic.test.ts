@@ -99,6 +99,16 @@ describe('send checks across fields (logicProblems)', () => {
   it('names must be different', () => {
     expect(msgs([F('number', { name: 'qty' }), F('number', { name: 'qty' })])).toEqual([expect.stringMatching(/already named "qty"/)]);
   });
+  it('names are per person: two people (e.g. members of a signing group) may each have a "qty", and each formula uses its own', () => {
+    const q1 = F('number', { name: 'qty' }, 'r1');
+    const t1 = F('formula', { formula: 'qty * 2' }, 'r1');
+    const q2 = F('number', { name: 'qty' }, 'r2');
+    const t2 = F('formula', { formula: 'qty * 2' }, 'r2');
+    expect(msgs([q1, t1, q2, t2])).toEqual([]);
+    const st = computeForm([q1, t1, q2, t2], (id) => (id === q1.id ? '3' : id === q2.id ? '5' : ''));
+    expect(valueOf(st, t1)).toBe('6.00');
+    expect(valueOf(st, t2)).toBe('10.00');
+  });
   it('every name used must exist, and belong to the same person', () => {
     expect(msgs([F('formula', { formula: 'qty * 2' })])).toEqual([expect.stringMatching(/No field is named "qty"/)]);
     expect(msgs([F('number', { name: 'qty' }, 'r2'), F('formula', { formula: 'qty * 2' }, 'r1')])).toEqual([expect.stringMatching(/another person/)]);

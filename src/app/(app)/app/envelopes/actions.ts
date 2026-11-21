@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { checkAccessCode, hashAccessCode } from '@/lib/access-code';
 import { fieldsSchema } from '@/lib/fields';
 import { sendProblems, toLogicFields } from '@/lib/form-logic';
+import { mirrorGroupFields } from '@/lib/groups';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { friendlyDbError } from '@/lib/request-guard';
 import { assignOrders, MAX_RECIPIENTS, validateRouting } from '@/lib/routing';
@@ -31,6 +32,8 @@ const recipientsSchema = z.object({
         // the extra identity check; the typed code is hashed below and never stored or logged as typed
         check: z.enum(['link', 'access_code', 'email_otp']).default('link'),
         code: z.string().max(200).default(''),
+        // D-81: signers with the same group name share one turn; the first of them to sign completes it
+        group: z.string().trim().max(60, 'A signing group name can be up to 60 characters.').default(''),
       }),
     )
     .min(1, 'Add at least one person who signs.')
@@ -50,8 +53,8 @@ export async function saveRecipientsAction(envelopeId: string, input: unknown): 
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Check the list of people.' };
   const { mode, recipients } = parsed.data;
 
-  const orders = mode === 'mixed' ? recipients.map((r) => r.order) : assignOrders(mode, recipients.map((r) => r.role));
-  const verdict = validateRouting(recipients.map((r, i) => ({ id: String(i), role: r.role, order: orders[i], status: 'created' as const })), mode);
+  const orders = mode === 'mixed' ? recipients.map((r) => r.order) : assignOrders(mode, recipients.map((r) => r.role), recipients.map((r) => (r.role === 'signer' ? r.group : null)));
+  const verdict = validateRouting(recipients.map((r, i) => ({ id: String(i), role: r.role, order: orders[i], status: 'created' as const, group: r.role === 'signer' ? r.group || null : null })), mode);
   if (!verdict.ok) return { ok: false, message: verdict.message };
   const seen = new Set<string>();
   for (const r of recipients) {
@@ -79,7 +82,7 @@ export async function saveRecipientsAction(envelopeId: string, input: unknown): 
   const { data: saved, error } = await admin.rpc('save_recipients', {
     p_actor: user.id,
     p_envelope_id: id.data,
-    p_recipients: recipients.map((r, i) => ({ id: r.id, name: r.name, email: r.email, role: r.role, routing_order: orders[i], is_sender: r.email === me })),
+    p_recipients: recipients.map((r, i) => ({ id: r.id, name: r.name, email: r.email, role: r.role, routing_order: orders[i], is_sender: r.email === me, signing_group: r.role === 'signer' ? r.group || null : null })),
   });
   if (error) {
     const friendly = friendlyDbError(error.message);
@@ -114,7 +117,10 @@ export async function saveFieldsAction(envelopeId: string, fields: unknown): Pro
   const id = z.uuid().safeParse(envelopeId);
   const parsed = fieldsSchema.safeParse(fields);
   if (!id.success || !parsed.success) return { ok: false, message: 'Those fields could not be saved. Reload the page and try again.' };
-  const { data, error } = await supabaseAdmin().rpc('save_fields', { p_actor: user.id, p_envelope_id: id.data, p_fields: parsed.data });
+  // D-81: the editor shows each signing group once (its first member); every other member gets the same fields
+  const userDb = await createSupabaseServerClient();
+  const { data: people } = await userDb.from('recipients').select('id, signing_group, routing_order, created_at').eq('envelope_id', id.data);
+  const { data, error } = await supabaseAdmin().rpc('save_fields', { p_actor: user.id, p_envelope_id: id.data, p_fields: mirrorGroupFields(parsed.data, people ?? []) });
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
   return { ok: true, hash: data as string };
 }
@@ -136,6 +142,8 @@ export async function sendEnvelopeAction(_prev: ActionResult | null, formData: F
   // D-79: formulas and conditions are checked here in full (the database checks only their shape). Read with the
   // user's own session, so nothing is learnt about a document they may not see.
   const userDb = await createSupabaseServerClient();
+  const synced = await syncGroupFields(user.id, id.data);
+  if (!synced.ok) return synced;
   const { data: fieldRows } = await userDb.from('fields').select('id, type, page, recipient_id, options').eq('envelope_id', id.data).order('page').order('y').order('x');
   const notReady = sendProblems(toLogicFields(fieldRows));
   if (notReady.length) return { ok: false, message: `Not ready to send. ${notReady[0]}${notReady.length > 1 ? ` (and ${notReady.length - 1} more: see the field editor)` : ''}` };
@@ -157,6 +165,28 @@ export async function sendEnvelopeAction(_prev: ActionResult | null, formData: F
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
   revalidatePath(`/app/envelopes/${id.data}`);
   return { ok: true, message: delivery.data === 'email' ? 'Sent. The signer will receive an email with their link.' : 'Ready. Copy the signing link below and share it with the signer.' };
+}
+
+/**
+ * D-81: before sending, make sure every member of each signing group has exactly the first member's fields (people may
+ * have joined or left a group after the fields were placed). Writes only when something differs.
+ */
+async function syncGroupFields(actor: string, envelopeId: string): Promise<ActionResult> {
+  const userDb = await createSupabaseServerClient();
+  const [{ data: people }, { data: rows }] = await Promise.all([
+    userDb.from('recipients').select('id, signing_group, routing_order, created_at').eq('envelope_id', envelopeId),
+    userDb.from('fields').select('document_id, recipient_id, type, page, x, y, w, h, required, options').eq('envelope_id', envelopeId),
+  ]);
+  if (!(people ?? []).some((r) => r.signing_group)) return { ok: true };
+  const current = (rows ?? []).map((f) => ({
+    document_id: f.document_id as string, recipient_id: f.recipient_id as string, type: f.type as string, page: Number(f.page),
+    x: Number(f.x), y: Number(f.y), w: Number(f.w), h: Number(f.h), required: Boolean(f.required), options: (f.options ?? {}) as Record<string, unknown>,
+  }));
+  const wanted = mirrorGroupFields(current, people ?? []);
+  const canon = (fs: typeof current) => fs.map((f) => JSON.stringify(f)).sort().join('\n');
+  if (canon(wanted) === canon(current)) return { ok: true };
+  const { error } = await supabaseAdmin().rpc('save_fields', { p_actor: actor, p_envelope_id: envelopeId, p_fields: wanted });
+  return error ? { ok: false, message: friendlyDbError(error.message).message } : { ok: true };
 }
 
 /** The sender asks for the signing link to share it themselves. Only members of the workspace get it. */

@@ -32,7 +32,7 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
   const id = job.envelope_id;
   const envelope = await must(db.from('envelopes').select('id, org_id, title, public_code, sender_id, delivery').eq('id', id).maybeSingle(), 'the envelope');
   const doc = await must(db.from('envelope_documents').select('storage_backend, storage_path, sha256').eq('envelope_id', id).order('position').limit(1).maybeSingle(), 'the document');
-  const recipients = await must(db.from('recipients').select('id, name, email, role, routing_order, auth_method, sent_at, viewed_at, consented_at, completed_at').eq('envelope_id', id).order('routing_order'), 'the recipients');
+  const recipients = await must(db.from('recipients').select('id, name, email, role, status, routing_order, auth_method, sent_at, viewed_at, consented_at, completed_at, signing_group, group_completed_by').eq('envelope_id', id).order('routing_order'), 'the recipients');
   const fields = await must(db.from('fields').select('id, recipient_id, type, page, x, y, w, h, options').eq('envelope_id', id), 'the fields');
   const values = await must(db.from('field_values').select('field_id, value_text, signature_asset_id, signature_id').eq('envelope_id', id), 'the field values');
   const consents = await must(db.from('consents').select('recipient_id, disclosure_version, ip, user_agent, given_at').eq('envelope_id', id).is('withdrawn_at', null).order('given_at'), 'the consent records');
@@ -52,8 +52,10 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
   const sealFields: SealField[] = [];
   // D-79: conditions and calculations worked out from the final values (the same code the signer page and the server
   // used). Hidden fields are left out of the signed copy; calculated fields print their value, rounded to their decimals.
-  const form = computeForm(toLogicFields(fields), (fieldId) => (valueOf.get(fieldId)?.value_text as string | null | undefined) ?? '');
-  for (const f of fields) {
+  // D-81: a signing group member who was no longer needed: their copy of the group's fields is not part of the signed copy
+  const sealedFields = fields.filter((f) => recipientOf.get(f.recipient_id as string)?.status !== 'skipped');
+  const form = computeForm(toLogicFields(sealedFields), (fieldId) => (valueOf.get(fieldId)?.value_text as string | null | undefined) ?? '');
+  for (const f of sealedFields) {
     if (form.hidden.has(f.id as string)) continue;
     const v = valueOf.get(f.id as string);
     const rect = { x: Number(f.x), y: Number(f.y), w: Number(f.w), h: Number(f.h) };
@@ -100,6 +102,7 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
       email: r.email as string,
       role: r.role as SealRecipient['role'],
       order: r.routing_order as number,
+      group: r.signing_group ? { label: r.signing_group as string, completedBy: r.group_completed_by ? ((recipientOf.get(r.group_completed_by as string)?.name as string | undefined) ?? null) : null } : undefined,
       authMethod: r.auth_method as SealRecipient['authMethod'],
       consentVersion: (consent?.disclosure_version as string | undefined) ?? null,
       signatureMethod: (signature?.method as SealRecipient['signatureMethod']) ?? null,

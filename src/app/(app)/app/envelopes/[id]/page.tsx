@@ -21,6 +21,7 @@ import { buildTimeline } from "@/lib/timeline";
 import { FieldEditor, type EditorField } from "./field-editor";
 import { PersonActions, VoidPanel } from "./open-actions";
 import { RecipientsEditor, type EditableRecipient } from "./recipients-editor";
+import { groupsOf, representatives } from "@/lib/groups";
 import { SendPanel, SigningLinkPanel } from "./send-panel";
 import { SenderTasks, type TaskView } from "./sender-tasks";
 import { DeleteForm, LegalHoldForm } from "./retention-panel";
@@ -53,6 +54,9 @@ interface RecipientRow {
   routing_order: number;
   decline_reason: string | null;
   auth_method: IdentityCheck;
+  signing_group: string | null;
+  group_completed_by: string | null;
+  created_at: string;
 }
 
 async function Envelope({ params }: { params: Promise<{ id: string }> }) {
@@ -87,7 +91,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     supabase
       .from("recipients")
       .select(
-        "id, name, email, role, status, is_sender, routing_order, decline_reason, auth_method",
+        "id, name, email, role, status, is_sender, routing_order, decline_reason, auth_method, signing_group, group_completed_by, created_at",
       )
       .eq("envelope_id", id.data)
       .order("routing_order")
@@ -125,9 +129,15 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     .order("created_at");
   const doc = docs?.[0];
   const recipients = (recipientRows ?? []) as RecipientRow[];
+  // D-81: each signing group appears once in the field editor (its first member); the others get the same fields on save
+  const groupOf = groupsOf(recipients);
+  const reps = representatives(recipients, (fields ?? []) as { recipient_id: string }[]);
   const signers = recipients
-    .filter((r) => r.role === "signer" || r.role === "in_person")
-    .map((r) => ({ id: r.id, name: r.name }));
+    .filter((r) => (r.role === "signer" || r.role === "in_person") && (reps.get(r.id) ?? r.id) === r.id)
+    .map((r) => {
+      const members = r.signing_group ? groupOf.get(r.signing_group.trim().toLowerCase()) : undefined;
+      return { id: r.id, name: members ? `${r.signing_group} (group: ${members.map((m) => m.name).join(", ")})` : r.name };
+    });
   const isDraft = env.status === "draft";
   const isOpen = env.status === "sent" || env.status === "in_progress";
   // A viewer reads everything and changes nothing (D-75): no editing controls. The database refuses their changes anyway.
@@ -191,7 +201,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     note: (t.note as string | null) ?? null,
     createdAt: t.created_at as string,
   }));
-  const initialFields: EditorField[] = (fields ?? []).map((f) => ({
+  const initialFields: EditorField[] = (fields ?? []).filter((f) => (reps.get(f.recipient_id as string) ?? f.recipient_id) === f.recipient_id).map((f) => ({
     key: f.id as string,
     recipientId: f.recipient_id as string,
     type: f.type as FieldType,
@@ -214,6 +224,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
       order: r.routing_order,
       check: r.auth_method,
       codeSet: r.auth_method === "access_code",
+      group: r.signing_group ?? "",
     }));
   // Whose link is locked after too many wrong codes. This table is server-only; the document itself was
   // already read through the user's own session above, so only a member of the workspace gets this far.
@@ -323,6 +334,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
                 </span>
                 <span className="text-ink-body">
                   {ROLE_LABEL[r.role]}
+                  {r.signing_group ? <span className="block text-ink-muted">Signing group: {r.signing_group}</span> : null}
                   {r.auth_method !== "link" ? (
                     <span className="block text-ink-muted">
                       Extra check:{" "}
@@ -333,7 +345,10 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
                   ) : null}
                 </span>
                 <span className="font-medium text-ink">
-                  {progressLabel(r.role, r.status)}
+                  {/* D-81: a member of a signing group who was no longer needed */}
+                  {r.status === "skipped" && r.group_completed_by
+                    ? `Not needed: ${recipients.find((x) => x.id === r.group_completed_by)?.name ?? "another member"} signed for the group`
+                    : progressLabel(r.role, r.status)}
                   {locked.has(r.id) ? (
                     <span className="block font-normal text-ink-body">
                       Locked after too many wrong codes

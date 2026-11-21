@@ -6,6 +6,8 @@
 // - Every recipient has an order number. Equal numbers act at the same time; a higher number waits
 //   until every acting recipient with a lower number has finished.
 // - A decline stops the document for everyone. When everyone who must act has finished, it is sealed.
+// - Signing group (D-81): signers with the same group name share one turn; the first of them to sign completes it,
+//   and the others are marked "skipped" (no longer needed). A group counts as one step.
 
 export const ROLES = ['signer', 'approver', 'cc', 'viewer', 'in_person'] as const;
 export type Role = (typeof ROLES)[number];
@@ -19,6 +21,8 @@ export interface RoutingRecipient {
   /** routing_order in the database: 1 or higher */
   order: number;
   status: RecipientStatus;
+  /** signing group name (signers only); members share one turn and one of them signs for all (D-81) */
+  group?: string | null;
 }
 
 export type Effect =
@@ -29,7 +33,7 @@ export type Effect =
   /** the document has stopped: revoke every link and tell the sender */
   | { type: 'declined'; by: string };
 
-export type Refusal = 'UNKNOWN' | 'DECLINED' | 'NOT_AN_ACTOR' | 'ALREADY_DONE' | 'CLOSED' | 'NOT_YOUR_TURN' | 'WRONG_ACTION';
+export type Refusal = 'UNKNOWN' | 'DECLINED' | 'NOT_AN_ACTOR' | 'GROUP_DONE' | 'ALREADY_DONE' | 'CLOSED' | 'NOT_YOUR_TURN' | 'WRONG_ACTION';
 
 export class RoutingError extends Error {
   constructor(
@@ -46,7 +50,9 @@ export const MAX_RECIPIENTS = 20;
 /** True for the roles whose action the document waits for. */
 export const mustAct = (r: Pick<RoutingRecipient, 'role'>): boolean => r.role === 'signer' || r.role === 'in_person' || r.role === 'approver';
 
-export const isDone = (r: RoutingRecipient): boolean => mustAct(r) && (r.status === 'signed' || r.status === 'approved');
+export const isDone = (r: RoutingRecipient): boolean => mustAct(r) && (r.status === 'signed' || r.status === 'approved' || isGroupSkipped(r));
+/** A group member who is no longer needed because another member signed (D-81). */
+export const isGroupSkipped = (r: RoutingRecipient): boolean => Boolean(r.group) && r.status === 'skipped';
 
 const isWaiting = (r: RoutingRecipient): boolean => r.status === 'created' || r.status === 'sent' || r.status === 'viewed' || r.status === 'consented';
 
@@ -67,6 +73,7 @@ export function canAct(recipients: readonly RoutingRecipient[], id: string): { o
   if (!r) return { ok: false, reason: 'UNKNOWN' };
   if (outcome(recipients) === 'declined') return { ok: false, reason: 'DECLINED' };
   if (!mustAct(r)) return { ok: false, reason: 'NOT_AN_ACTOR' };
+  if (isGroupSkipped(r)) return { ok: false, reason: 'GROUP_DONE' };
   if (isDone(r)) return { ok: false, reason: 'ALREADY_DONE' };
   if (!isWaiting(r)) return { ok: false, reason: 'CLOSED' };
   if (r.order !== activeOrder(recipients)) return { ok: false, reason: 'NOT_YOUR_TURN' };
@@ -104,6 +111,7 @@ const REFUSAL_TEXT: Record<Exclude<Refusal, 'WRONG_ACTION'>, string> = {
   UNKNOWN: 'This person is not a recipient of the document.',
   DECLINED: 'This document was declined and is closed.',
   NOT_AN_ACTOR: 'This person receives a copy and has nothing to sign.',
+  GROUP_DONE: "Someone else in this person's signing group has already signed.",
   ALREADY_DONE: 'This person has already finished.',
   CLOSED: 'This document is no longer open for this person.',
   NOT_YOUR_TURN: 'It is not this person\'s turn yet.',
@@ -125,22 +133,31 @@ export function applyAction(recipients: readonly RoutingRecipient[], id: string,
     return { recipients: closed, effects: [{ type: 'declined', by: id }] };
   }
 
-  const acted = recipients.map((r) => (r.id === id ? { ...r, status: action === 'approve' ? ('approved' as const) : ('signed' as const) } : { ...r }));
+  // a signing group member signs for the whole group: the other members still waiting are no longer needed
+  const acted = recipients.map((r) => {
+    if (r.id === id) return { ...r, status: action === 'approve' ? ('approved' as const) : ('signed' as const) };
+    if (actor.group && r.group === actor.group && isWaiting(r)) return { ...r, status: 'skipped' as const };
+    return { ...r };
+  });
   if (outcome(acted) === 'ready_to_seal') return { recipients: acted, effects: [{ type: 'seal' }] };
   return advance(acted);
 }
 
 /** Order numbers for the two presets, given the recipients' roles in list order. */
-export function assignOrders(mode: 'sequential' | 'parallel', roles: readonly Role[]): number[] {
+export function assignOrders(mode: 'sequential' | 'parallel', roles: readonly Role[], groups: readonly (string | null | undefined)[] = []): number[] {
   if (mode === 'parallel') return roles.map(() => 1);
   let turn = 0;
-  return roles.map((role) => {
+  const groupTurn = new Map<string, number>(); // D-81: a signing group takes one turn, at its first member's place
+  return roles.map((role, i) => {
+    const g = role === 'signer' ? groups[i]?.trim().toLowerCase() : '';
+    if (g && groupTurn.has(g)) return groupTurn.get(g)!;
     if (mustAct({ role })) turn++;
+    if (g) groupTurn.set(g, Math.max(turn, 1));
     return Math.max(turn, 1); // CC and viewers ride along with the acting person before them
   });
 }
 
-export type RoutingProblem = 'NO_SIGNER' | 'TOO_MANY' | 'DUPLICATE_ID' | 'BAD_ORDER' | 'SEQUENTIAL_TIE' | 'PARALLEL_SPLIT';
+export type RoutingProblem = 'NO_SIGNER' | 'TOO_MANY' | 'DUPLICATE_ID' | 'BAD_ORDER' | 'SEQUENTIAL_TIE' | 'PARALLEL_SPLIT' | 'GROUP';
 
 export function validateRouting(recipients: readonly RoutingRecipient[], mode: RoutingMode): { ok: true } | { ok: false; code: RoutingProblem; message: string } {
   const bad = (code: RoutingProblem, message: string) => ({ ok: false as const, code, message });
@@ -148,7 +165,23 @@ export function validateRouting(recipients: readonly RoutingRecipient[], mode: R
   if (recipients.length > MAX_RECIPIENTS) return bad('TOO_MANY', `A document can have up to ${MAX_RECIPIENTS} recipients.`);
   if (new Set(recipients.map((r) => r.id)).size !== recipients.length) return bad('DUPLICATE_ID', 'A recipient is listed twice.');
   if (recipients.some((r) => !Number.isInteger(r.order) || r.order < 1 || r.order > 99)) return bad('BAD_ORDER', 'Signing order must be a whole number from 1 to 99.');
-  const acting = recipients.filter(mustAct).map((r) => r.order);
+  const groups = new Map<string, RoutingRecipient[]>();
+  for (const r of recipients) {
+    const g = r.group?.trim();
+    if (!g) continue;
+    if (g.length > 60) return bad('GROUP', 'A signing group name can be up to 60 characters.');
+    groups.set(g.toLowerCase(), [...(groups.get(g.toLowerCase()) ?? []), r]);
+  }
+  for (const [, members] of groups) {
+    const label = members[0].group!.trim();
+    if (members.some((m) => m.role !== 'signer')) return bad('GROUP', `Only people who sign can be in a signing group ("${label}").`);
+    if (members.length < 2) return bad('GROUP', `The signing group "${label}" needs at least two people.`);
+    if (new Set(members.map((m) => m.order)).size > 1) return bad('GROUP', `Everyone in the signing group "${label}" must have the same place in the order.`);
+  }
+  // a signing group takes one turn, like one person
+  const units = new Map<string, number>();
+  for (const r of recipients.filter(mustAct)) units.set(r.group?.trim() ? `g:${r.group.trim().toLowerCase()}` : `r:${r.id}`, r.order);
+  const acting = [...units.values()];
   if (mode === 'sequential' && new Set(acting).size !== acting.length) return bad('SEQUENTIAL_TIE', 'In "one after another" each person who signs or approves needs their own place in the order.');
   if (mode === 'parallel' && new Set(acting).size > 1) return bad('PARALLEL_SPLIT', 'In "all at once" everyone who signs or approves shares the same place in the order.');
   return { ok: true };

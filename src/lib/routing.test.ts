@@ -273,3 +273,67 @@ describe('routing: presets and validation', () => {
     expect(validateRouting([R('a', 'signer', 1), R('b', 'approver', 1), R('c', 'cc', 9)], 'mixed')).toEqual({ ok: true });
   });
 });
+
+// ---------- signing groups (Phase 4 slice 6, D-81) ----------
+const G = (id: string, order: number, group: string): RoutingRecipient => ({ id, role: 'signer', order, status: 'created', group });
+
+/** Random documents where, for some order numbers, all the signers there form one group (when there are two or more). */
+const groupedArb = fc.tuple(recipientsArb, fc.array(fc.boolean(), { minLength: 4, maxLength: 4 })).map(([list, pick]) => {
+  const signersAt = (o: number) => list.filter((r) => r.role === 'signer' && r.order === o);
+  return list.map((r) => (r.role === 'signer' && pick[r.order - 1] && signersAt(r.order).length >= 2 ? { ...r, group: `g${r.order}` } : r));
+});
+const units = (rs: RoutingRecipient[]) => new Set(rs.filter(mustAct).map((r) => (r.group ? `g:${r.group}` : `r:${r.id}`))).size;
+
+describe('routing: signing groups (D-81)', () => {
+  it('the first member to sign completes the group; the others are no longer needed and cannot act', () => {
+    let rs = advance([G('a', 1, 'Finance'), G('b', 1, 'Finance'), G('c', 1, 'Finance'), R('d', 'signer', 2)]).recipients;
+    expect(['a', 'b', 'c'].every((id) => canAct(rs, id).ok)).toBe(true);
+    expect(canAct(rs, 'd')).toEqual({ ok: false, reason: 'NOT_YOUR_TURN' });
+    const res = applyAction(rs, 'b', 'sign');
+    rs = res.recipients;
+    expect(rs.map((r) => r.status)).toEqual(['skipped', 'signed', 'skipped', 'sent']);
+    expect(res.effects).toEqual([{ type: 'activate', ids: ['d'] }]);
+    expect(canAct(rs, 'a')).toEqual({ ok: false, reason: 'GROUP_DONE' });
+    expect(() => applyAction(rs, 'c', 'sign')).toThrow(/signing group has already signed/);
+    expect(applyAction(rs, 'd', 'sign').effects).toEqual([{ type: 'seal' }]);
+  });
+  it('"one after another" gives a signing group one turn, at its first member\'s place, wherever the members are listed', () => {
+    expect(assignOrders('sequential', ['signer', 'signer', 'signer', 'signer'], ['F', null, 'f', null])).toEqual([1, 2, 1, 3]);
+    expect(assignOrders('sequential', ['approver', 'signer', 'signer', 'cc'], [null, 'F', 'F', null])).toEqual([1, 2, 2, 2]);
+    const roles: Role[] = ['signer', 'signer', 'signer'];
+    const groups = ['F', 'F', null];
+    const orders = assignOrders('sequential', roles, groups);
+    expect(validateRouting(roles.map((role, i) => ({ id: String(i), role, order: orders[i], status: 'created' as const, group: groups[i] })), 'sequential')).toEqual({ ok: true });
+  });
+  it('a decline by a group member still stops the whole document', () => {
+    const rs = advance([G('a', 1, 'Finance'), G('b', 1, 'Finance'), R('d', 'signer', 2)]).recipients;
+    const res = applyAction(rs, 'a', 'decline');
+    expect(outcome(res.recipients)).toBe('declined');
+    expect(canAct(res.recipients, 'b')).toEqual({ ok: false, reason: 'DECLINED' });
+  });
+  it('validation: signers only, at least two, one shared place; a group is one step in "one after another"', () => {
+    expect(validateRouting([G('a', 1, 'F'), G('b', 1, 'F'), R('c', 'signer', 2)], 'sequential')).toEqual({ ok: true });
+    expect(validateRouting([G('a', 1, 'F'), { ...G('b', 1, 'F'), role: 'approver' }], 'mixed')).toMatchObject({ ok: false, code: 'GROUP', message: expect.stringMatching(/Only people who sign/) });
+    expect(validateRouting([G('a', 1, 'F'), R('b', 'signer', 2)], 'mixed')).toMatchObject({ ok: false, code: 'GROUP', message: expect.stringMatching(/at least two/) });
+    expect(validateRouting([G('a', 1, 'F'), G('b', 2, 'F')], 'mixed')).toMatchObject({ ok: false, code: 'GROUP', message: expect.stringMatching(/same place/) });
+    expect(validateRouting([G('a', 1, 'F'), G('b', 1, 'f')], 'mixed')).toEqual({ ok: true }); // names compare without case
+    expect(validateRouting([G('a', 1, 'x'.repeat(61)), G('b', 1, 'x'.repeat(61))], 'mixed')).toMatchObject({ ok: false, code: 'GROUP' });
+  });
+  it('property: without a decline it completes after one action per person or group; exactly one member of each group signs; sealing once, last', () => {
+    fc.assert(
+      fc.property(groupedArb, picksArb, (start, picks) => {
+        const run = play(start, picks);
+        expect(outcome(run.rs)).toBe('ready_to_seal');
+        expect(run.steps).toBe(units(start));
+        expect(run.effects.filter((e) => e.type === 'seal')).toHaveLength(1);
+        expect(run.effects.at(-1)).toEqual({ type: 'seal' });
+        for (const g of new Set(start.filter((r) => r.group).map((r) => r.group))) {
+          const members = run.rs.filter((r) => r.group === g);
+          expect(members.filter((r) => r.status === 'signed')).toHaveLength(1);
+          expect(members.filter((r) => r.status === 'skipped')).toHaveLength(members.length - 1);
+        }
+      }),
+      { numRuns: 500 },
+    );
+  });
+});

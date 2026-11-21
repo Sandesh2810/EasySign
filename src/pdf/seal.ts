@@ -36,6 +36,8 @@ export interface SealRecipient {
   /** approximate country/region, or null when not determined */
   region: string | null;
   timeline: { sent?: Date; viewed?: Date; consented?: Date; completed?: Date; declined?: Date };
+  /** D-81: signing group; completedBy is set for a member who was no longer needed because another member signed */
+  group?: { label: string; completedBy: string | null };
 }
 
 export type SealField =
@@ -463,6 +465,7 @@ function writeCertificate(doc: PDFDocument, fonts: Fonts, input: SealInput, orig
     line(fonts.safe(`${i + 1}. ${r.name} <${r.email}>`), LEFT, 9.5, fonts.bold);
     y -= 16;
     kv('Role', `${ROLE_LABEL[r.role]} · order ${r.order}`);
+    if (r.group) kv('Signing group', fonts.safe(r.group.completedBy ? `${r.group.label} · not needed: ${r.group.completedBy} signed for the group` : r.group.label));
     kv('Authentication', AUTH_LABEL[r.authMethod]);
     kv('Consent to e-records', r.consentVersion ? `${r.consentVersion}${r.timeline.consented ? ` · ${fmtUtc(r.timeline.consented)}` : ''}` : 'Not applicable');
     kv('Signature method', r.signatureMethod ? METHOD_LABEL[r.signatureMethod] : 'Not applicable');

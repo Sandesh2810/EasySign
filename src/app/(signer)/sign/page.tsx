@@ -66,6 +66,20 @@ async function Sign() {
       </div>
     );
   }
+  if (recipient.status === 'skipped') {
+    // D-81 (AT4.5): another member of this person's signing group signed for the group
+    const { data: me } = await admin.from('recipients').select('signing_group, group_completed_by').eq('id', recipient.id).maybeSingle();
+    if (me?.group_completed_by) {
+      const { data: by } = await admin.from('recipients').select('name, completed_at').eq('id', me.group_completed_by as string).maybeSingle();
+      const when = by?.completed_at ? new Date(by.completed_at as string).toISOString().slice(0, 10) : null;
+      return (
+        <Message
+          title="Already completed"
+          body={`${(by?.name as string | undefined) ?? 'Another member'} signed "${envelope.title}" for your signing group "${me.signing_group as string}"${when ? ` on ${when}` : ''}. Nothing more is needed from you.`}
+        />
+      );
+    }
+  }
   const { data: profile } = await admin.from('profiles').select('display_name').eq('id', envelope.sender_id).maybeSingle();
   const senderName = recipient.is_sender ? 'you' : (profile?.display_name as string | undefined) || 'the sender';
 

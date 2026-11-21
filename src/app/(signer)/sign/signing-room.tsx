@@ -252,6 +252,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
     if (!res.ok) {
       setFinishing(false);
       setFinishError(res.message);
+      // D-81: another member of the signing group signed first: show the "already completed" page
+      if (/signing group/.test(res.message)) router.refresh();
       return;
     }
     router.refresh();

@@ -31,6 +31,7 @@ export interface FormState {
   computed: Map<string, Computed>;
 }
 
+const key = (recipientId: string, name: string) => `${recipientId}|${name}`;
 const label = (f: LogicField) => (f.options.name ? `"${f.options.name}"` : `the ${FIELD_LABEL[f.type].toLowerCase()} field${f.page ? ` on page ${f.page}` : ''}`);
 
 function tryParse(src: string): Expr | null {
@@ -80,17 +81,20 @@ export function sendProblems(fields: LogicField[]): string[] {
 /** Problems that involve more than one field. Single-field problems: fieldOptionsProblem. */
 export function logicProblems(fields: LogicField[]): LogicProblem[] {
   const problems: LogicProblem[] = [];
+  // names are per person (D-81: each member of a signing group has the same fields, names included)
   const byName = new Map<string, LogicField>();
+  const anyByName = new Map<string, LogicField>();
   for (const f of fields) {
     const n = f.options.name;
     if (!n) continue;
-    const other = byName.get(n);
-    if (other) problems.push({ fieldId: f.id, message: `Another field is already named "${n}". Each name must be different.` });
-    else byName.set(n, f);
+    if (!anyByName.has(n)) anyByName.set(n, f);
+    const other = byName.get(key(f.recipient_id, n));
+    if (other) problems.push({ fieldId: f.id, message: `Another field of this person is already named "${n}". Each name must be different.` });
+    else byName.set(key(f.recipient_id, n), f);
   }
   for (const f of fields) {
     for (const n of depsOf(f)) {
-      const target = byName.get(n);
+      const target = byName.get(key(f.recipient_id, n)) ?? anyByName.get(n);
       if (!target) problems.push({ fieldId: f.id, message: `No field is named "${n}". Give a field that name, or correct the spelling.` });
       else if (target.recipient_id !== f.recipient_id) {
         problems.push({ fieldId: f.id, message: `"${n}" is filled in by another person. Formulas and conditions can only use the same person's fields.` });
@@ -113,8 +117,8 @@ export function logicProblems(fields: LogicField[]): LogicProblem[] {
     }
     state.set(f.id, 'active');
     for (const n of depsOf(f)) {
-      const t = byName.get(n);
-      if (t && t.recipient_id === f.recipient_id) visit(t, [...path, f]);
+      const t = byName.get(key(f.recipient_id, n));
+      if (t) visit(t, [...path, f]);
     }
     state.set(f.id, 'done');
   };
@@ -129,14 +133,14 @@ export function logicProblems(fields: LogicField[]): LogicProblem[] {
  */
 export function computeForm(fields: LogicField[], valueOf: (fieldId: string) => string): FormState {
   const byName = new Map<string, LogicField>();
-  for (const f of fields) if (f.options.name && !byName.has(f.options.name)) byName.set(f.options.name, f);
+  for (const f of fields) if (f.options.name && !byName.has(key(f.recipient_id, f.options.name))) byName.set(key(f.recipient_id, f.options.name), f);
   const hiddenMemo = new Map<string, boolean>();
   const formulaMemo = new Map<string, Computed>();
   const busy = new Set<string>(); // circle guard (logicProblems refuses circles at sending; this keeps evaluation finite anyway)
 
   const lookupFor = (f: LogicField) => (name: string): Val => {
-    const t = byName.get(name);
-    if (!t || t.recipient_id !== f.recipient_id) throw new ExprError(`No field is named "${name}".`);
+    const t = byName.get(key(f.recipient_id, name));
+    if (!t) throw new ExprError(`No field is named "${name}".`);
     if (isHidden(t)) return EMPTY;
     if (t.type === 'formula') {
       const c = formulaOf(t);

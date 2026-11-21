@@ -17,6 +17,8 @@ export interface EditableRecipient {
   check?: IdentityCheck;
   /** an access code is already stored for this person (it cannot be shown again) */
   codeSet?: boolean;
+  /** signing group name (signers only, D-81): the first member to sign completes it for all */
+  group?: string;
 }
 interface Row extends EditableRecipient {
   key: string;
@@ -42,7 +44,19 @@ function describe(rows: Row[], orders: number[]): string {
   const turns = [...new Set(acting.map((x) => x.order))].sort((a, b) => a - b);
   const parts = turns.map((t, i) => {
     const people = acting.filter((x) => x.order === t);
-    const names = people.map((x) => `${x.r.name.trim()} (${x.r.role === 'approver' ? 'approves' : 'signs'})`);
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const x of people) {
+      const g = x.r.role === 'signer' ? (x.r.group ?? '').trim() : '';
+      if (!g) {
+        names.push(`${x.r.name.trim()} (${x.r.role === 'approver' ? 'approves' : 'signs'})`);
+        continue;
+      }
+      if (seen.has(g.toLowerCase())) continue;
+      seen.add(g.toLowerCase());
+      const members = people.filter((y) => y.r.role === 'signer' && (y.r.group ?? '').trim().toLowerCase() === g.toLowerCase()).map((y) => y.r.name.trim());
+      names.push(`one of ${members.join(' or ')} ("${g}" group signs once)`);
+    }
     return `${i + 1}. ${names.join(' and ')}`;
   });
   const copies = rows.filter((r) => r.role === 'cc' && r.name.trim()).map((r) => r.name.trim());
@@ -64,7 +78,7 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [pending, start] = useTransition();
 
-  const orders = useMemo(() => (mode === 'mixed' ? rows.map((r) => r.order) : assignOrders(mode, rows.map((r) => r.role as Role))), [mode, rows]);
+  const orders = useMemo(() => (mode === 'mixed' ? rows.map((r) => r.order) : assignOrders(mode, rows.map((r) => r.role as Role), rows.map((r) => (r.role === 'signer' ? r.group : null)))), [mode, rows]);
   const summary = useMemo(() => describe(rows, orders), [rows, orders]);
   const meListed = rows.some((r) => r.email.trim().toLowerCase() === me.email.toLowerCase());
   // no extra check for someone who only gets a copy, or for yourself
@@ -88,7 +102,8 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
   const save = () =>
     start(async () => {
       const filled = rows.filter((r) => r.name.trim() || r.email.trim());
-      const check = validateRouting(filled.map((r, i) => ({ id: String(i), role: r.role, order: mode === 'mixed' ? r.order : assignOrders(mode, filled.map((x) => x.role as Role))[i], status: 'created' as const })), mode);
+      const filledOrders = mode === 'mixed' ? filled.map((r) => r.order) : assignOrders(mode, filled.map((x) => x.role as Role), filled.map((x) => (x.role === 'signer' ? x.group : null)));
+      const check = validateRouting(filled.map((r, i) => ({ id: String(i), role: r.role, order: filledOrders[i], status: 'created' as const, group: r.role === 'signer' ? (r.group ?? '').trim() || null : null })), mode);
       if (!check.ok) {
         setResult({ ok: false, message: check.message });
         return;
@@ -98,7 +113,7 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
         setResult({ ok: false, message: `Type an access code for ${noCode.name.trim() || 'this person'}, or choose a different check.` });
         return;
       }
-      const res = await saveRecipientsAction(envelopeId, { mode, recipients: filled.map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role, order: r.order, check: canHaveCheck(r) ? (r.check ?? 'link') : 'link', code: r.check === 'access_code' ? r.code : '' })) }).catch(() => ({ ok: false as const, message: 'Could not reach the server. Nothing was saved.' }));
+      const res = await saveRecipientsAction(envelopeId, { mode, recipients: filled.map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role, order: r.order, check: canHaveCheck(r) ? (r.check ?? 'link') : 'link', code: r.check === 'access_code' ? r.code : '', group: r.role === 'signer' ? (r.group ?? '').trim() : '' })) }).catch(() => ({ ok: false as const, message: 'Could not reach the server. Nothing was saved.' }));
       setResult({ ok: res.ok, message: res.message ?? 'Saved.' });
       if (res.ok) setDirty(false);
     });
@@ -182,6 +197,28 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
                 </button>
               </div>
             </div>
+            {r.role === 'signer' ? (
+              <div className="mt-3 grid gap-3 border-t border-hairline pt-3 sm:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] sm:items-start">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor={`group-${r.key}`} className="text-sm font-medium text-ink">
+                    Signing group (optional)
+                  </label>
+                  <input
+                    id={`group-${r.key}`}
+                    value={r.group ?? ''}
+                    maxLength={60}
+                    autoComplete="off"
+                    placeholder="e.g. Finance"
+                    onChange={(e) => patch(r.key, { group: e.target.value })}
+                    aria-describedby={`group-hint-${r.key}`}
+                    className={INPUT}
+                  />
+                </div>
+                <p id={`group-hint-${r.key}`} className="text-sm text-ink-muted sm:pt-7">
+                  Give two or more signers the same group name and they share one turn: the first of them to sign signs for all; the others are told it is already done. Place the fields once, for the group.
+                </p>
+              </div>
+            ) : null}
             {canHaveCheck(r) ? (
               <div className="mt-3 grid gap-3 border-t border-hairline pt-3 sm:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] sm:items-start">
                 <div className="flex flex-col gap-1.5">
