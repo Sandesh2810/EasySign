@@ -60,6 +60,16 @@ export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: str
           </div>
         )}
       </div>
+      {selfSign ? null : (
+        // D-83: a signer or approver may give their part to someone else (their link stops working; the handoff is recorded)
+        <label className="flex items-start gap-3 text-sm text-ink">
+          <input type="checkbox" name="allow_delegation" className="mt-0.5 size-5 shrink-0 accent-ink" />
+          <span>
+            Let people hand their part to someone else
+            <span className="block text-ink-muted">For example to a colleague with authority to sign. Their link stops working, the new person gets their own, and you are told who and why.</span>
+          </span>
+        </label>
+      )}
       {state && !state.ok ? <Notice tone="danger">{state.message}</Notice> : null}
       <div className="flex flex-wrap gap-2">
         {selfSign ? (

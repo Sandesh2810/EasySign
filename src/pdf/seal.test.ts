@@ -40,6 +40,9 @@ async function input(original: Uint8Array): Promise<SealInput> {
         id: 'r2', name: 'Zoë Müller-Łukasz', email: 'zoe@example.test', role: 'signer', order: 2, authMethod: 'access_code',
         consentVersion: 'esign-consent-v1', signatureMethod: 'typed', ip: '2001:db8::1', userAgent: 'Mozilla/5.0 (Windows NT 10.0) Chrome', region: null,
         timeline: { sent: new Date('2026-11-17T10:00:30Z'), viewed: new Date('2026-11-17T10:02:00Z'), consented: new Date('2026-11-17T10:02:30Z'), completed: new Date('2026-11-17T10:04:00Z') },
+        // D-83: Zoë took over from Ben, who handed his part to her; D-81: a signing group label
+        handoffs: [{ fromName: 'Ben Before', fromEmail: 'ben@example.test', toName: 'Zoë Müller-Łukasz', by: 'signer', at: new Date('2026-11-17T10:01:00Z'), reason: 'On leave' }],
+        group: { label: 'Board', completedBy: null },
       },
     ],
     fields: [
@@ -152,6 +155,7 @@ describe('buildSealedPdf', () => {
       'Alice Example', 'alice@example.test', 'Zoë Müller-Łukasz', 'zoe@example.test', '203.0.113.7', '2001:db8::1',
       'esign-consent-v1', 'Link only', 'Access code', 'Drawn', 'Typed', '2026-11-17 09:56:00 UTC', 'US-TX (approximate)', 'Not determined',
       'not proof of physical presence',
+      'Handed over', 'Ben Before <ben@example.test>', 'by Ben Before', '2026-11-17 10:01:00 UTC', 'On leave', 'Signing group', 'Board',
     ]) {
       expect(cert, `certificate should contain "${needle}"`).toContain(needle);
     }

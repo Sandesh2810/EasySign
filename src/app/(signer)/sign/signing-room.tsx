@@ -9,6 +9,7 @@ import { computeForm } from '@/lib/form-logic';
 import { AttachmentField } from './attachment-field';
 import { approveAction, completeAction, fillFieldAction } from './actions';
 import { DeclineControl } from './decline';
+import { HandOffControl } from './handoff';
 import { PaperCopyControl, WithdrawControl } from './paper-withdraw';
 import { SignatureDialog } from './signature-dialog';
 
@@ -34,6 +35,8 @@ interface Props {
   intentText: string;
   /** sign: fill fields and sign. approve: read, then approve or decline. view: read only. */
   mode: 'sign' | 'approve' | 'view';
+  /** D-83: the sender lets this person hand their part to someone else */
+  allowHandOff?: boolean;
 }
 interface PageInfo {
   width: number;
@@ -53,7 +56,7 @@ const isTyped = (t: FieldType) => TYPED_TYPES.includes(t);
 const isPicked = (t: FieldType) => t === 'checkbox' || t === 'radio' || t === 'dropdown' || t === 'attachment';
 const safeUrl = (u?: string) => (u && /^https?:\/\//i.test(u) ? u : null);
 
-export function SigningRoom({ title, senderLine, signer, fields, adopted, intentText, mode }: Props) {
+export function SigningRoom({ title, senderLine, signer, fields, adopted, intentText, mode, allowHandOff = false }: Props) {
   const router = useRouter();
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -275,6 +278,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
             <div className="flex flex-wrap items-center gap-2">
               <PaperCopyControl className="px-2" />
               <WithdrawControl className="px-2" />
+              {allowHandOff ? <HandOffControl className="px-2" /> : null}
               <DeclineControl />
               <Button type="button" onClick={openConfirm}>
                 Approve
@@ -287,6 +291,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
               </p>
               <PaperCopyControl className="px-2" />
               <WithdrawControl className="px-2" />
+              {allowHandOff ? <HandOffControl className="px-2" /> : null}
               <DeclineControl variant="quiet" className="px-2" />
               {remaining.length > 0 ? (
                 <Button type="button" onClick={() => goNext()}>

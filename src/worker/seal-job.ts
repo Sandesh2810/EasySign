@@ -35,6 +35,8 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
   const recipients = await must(db.from('recipients').select('id, name, email, role, status, routing_order, auth_method, sent_at, viewed_at, consented_at, completed_at, signing_group, group_completed_by').eq('envelope_id', id).order('routing_order'), 'the recipients');
   const fields = await must(db.from('fields').select('id, recipient_id, type, page, x, y, w, h, options').eq('envelope_id', id), 'the fields');
   const values = await must(db.from('field_values').select('field_id, value_text, signature_asset_id, signature_id').eq('envelope_id', id), 'the field values');
+  // D-83: who handed whose place to whom, for the certificate
+  const handoffRows = await must(db.from('recipient_handoffs').select('recipient_id, by_kind, from_name, from_email, to_name, reason, created_at').eq('envelope_id', id).order('created_at'), 'the handoffs');
   const consents = await must(db.from('consents').select('recipient_id, disclosure_version, ip, user_agent, given_at').eq('envelope_id', id).is('withdrawn_at', null).order('given_at'), 'the consent records');
   const recipientIds = recipients.map((r) => r.id as string);
   const assets = await must(db.from('signature_assets').select('id, recipient_id, kind, method, storage_backend, storage_path, sha256').in('recipient_id', recipientIds), 'the signatures');
@@ -102,6 +104,7 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
       email: r.email as string,
       role: r.role as SealRecipient['role'],
       order: r.routing_order as number,
+      handoffs: handoffRows.filter((h) => h.recipient_id === r.id).map((h) => ({ fromName: h.from_name as string, fromEmail: h.from_email as string, toName: h.to_name as string, by: h.by_kind as 'sender' | 'signer', at: new Date(h.created_at as string), reason: (h.reason as string | null) ?? null })),
       group: r.signing_group ? { label: r.signing_group as string, completedBy: r.group_completed_by ? ((recipientOf.get(r.group_completed_by as string)?.name as string | undefined) ?? null) : null } : undefined,
       authMethod: r.auth_method as SealRecipient['authMethod'],
       consentVersion: (consent?.disclosure_version as string | undefined) ?? null,

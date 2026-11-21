@@ -127,6 +127,13 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     .select("field_id, recipient_id, file_name, kind, size_bytes, sha256")
     .eq("envelope_id", id.data)
     .order("created_at");
+  // D-83: handoffs (reassigned by the sender or handed off by a signer), read through the person's own session
+  const { data: handoffRows } = await supabase
+    .from("recipient_handoffs")
+    .select("id, by_kind, from_name, to_name, to_email, reason, created_at")
+    .eq("envelope_id", id.data)
+    .order("created_at");
+  const handoffs = (handoffRows ?? []) as { id: string; by_kind: string; from_name: string; to_name: string; to_email: string; reason: string | null; created_at: string }[];
   const doc = docs?.[0];
   const recipients = (recipientRows ?? []) as RecipientRow[];
   // D-81: each signing group appears once in the field editor (its first member); the others get the same fields on save
@@ -374,6 +381,10 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
                       "viewed",
                       "consented",
                     ].includes(r.status)}
+                    canReassign={
+                      (r.role === "signer" || r.role === "approver") &&
+                      ["created", "sent", "viewed", "consented"].includes(r.status)
+                    }
                     locked={locked.has(r.id)}
                   />
                 ) : null}
@@ -381,6 +392,21 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
             ))}
           </ol>
         )}
+        {handoffs.length ? (
+          // D-83: who handed what to whom, and why
+          <div className="mt-4 border-t border-hairline pt-4">
+            <h3 className="text-sm font-medium text-ink">Handed over</h3>
+            <ul className="mt-2 flex flex-col gap-1 text-sm text-ink-body">
+              {handoffs.map((h) => (
+                <li key={h.id}>
+                  {h.from_name} → {h.to_name} ({h.to_email}), {h.by_kind === "signer" ? `by ${h.from_name}` : "by you or your team"} on{" "}
+                  {new Date(h.created_at).toISOString().slice(0, 10)}
+                  {h.reason ? `: ${h.reason}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {isOpen && env.expires_at ? (
           <p className="mt-4 border-t border-hairline pt-4 text-sm text-ink-body">
             The signing links stop working on{" "}

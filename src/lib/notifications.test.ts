@@ -15,6 +15,7 @@ describe('in-app notices', () => {
     const kinds = [
       'recipient_signed',
       'recipient_approved',
+      'recipient_delegated',
       'envelope_completed',
       'envelope_declined',
       'envelope_expired',
@@ -35,6 +36,12 @@ describe('in-app notices', () => {
     const texts = kinds.map((k) => describeNotification(k, { envelope_id: ID, title: 'T', by: 'B', kind: 'signature_request' }).text);
     expect(new Set(texts).size).toBe(kinds.length);
     for (const t of texts) expect(t).not.toBe(fallback);
+  });
+
+  it('a hand-off tells the sender who handed to whom and where the new link is (D-83)', () => {
+    const v = describeNotification('recipient_delegated', { envelope_id: ID, title: 'Lease 2027', by: 'Ann Able', to: 'Dan Delegate' });
+    expect(v.text).toBe("Ann Able handed \"Lease 2027\" to Dan Delegate. Ann Able's link no longer works; Dan Delegate has their own. If you share links yourself, copy Dan Delegate's link from the document page.");
+    expect(v.path).toBe(`/app/envelopes/${ID}`);
   });
 
   it('a held email tells the sender what waits, until when, and what they can do now', () => {

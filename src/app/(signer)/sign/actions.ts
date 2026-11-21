@@ -11,6 +11,7 @@ import { computeForm, toLogicFields } from '@/lib/form-logic';
 import { allow, TOO_MANY } from '@/lib/rate-limit';
 import { friendlyDbError } from '@/lib/request-guard';
 import { consentOnFile } from '@/lib/signing/consent';
+import { mintTokenRecord } from '@/lib/signing/links';
 import { loadSignerContext, requestEvidence } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getStorage } from '@/storage';
@@ -176,6 +177,37 @@ export async function declineAction(reason: string): Promise<SignResult> {
   if (!text.success) return { ok: false, message: 'Keep the reason under 1000 characters.' };
   const { ip, ua } = await requestEvidence();
   const { error } = await supabaseAdmin().rpc('signer_decline', { p_token_id: ctx.tokenId, p_reason: text.data, p_ip: ip, p_user_agent: ua });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  return { ok: true };
+}
+
+/**
+ * D-83 (AT4.6): hand my part to someone else, when the sender allowed it. My link stops working at once; the new person
+ * gets a fresh one (by email when the sender sends by email; otherwise the sender shares it). The sender is told.
+ */
+const delegateSchema = z.object({
+  name: z.string().trim().min(1, 'Enter the name of the person you are handing this to.').max(120),
+  email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address.')),
+  reason: z.string().trim().max(500, 'Keep the reason under 500 characters.').default(''),
+});
+export async function delegateAction(input: { name: string; email: string; reason: string }): Promise<SignResult> {
+  const ctx = await loadSignerContext();
+  if (!ctx) return { ok: false, message: EXPIRED };
+  if (!(await allow({ bucket: 'sign_delegate', limit: 5, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  const parsed = delegateSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Check the name and email address.' };
+  if (parsed.data.email === ctx.recipient.email.toLowerCase()) return { ok: false, message: 'That is your own email address. Give the other person’s address.' };
+  const { ip, ua } = await requestEvidence();
+  const token = mintTokenRecord(ctx.recipient.id);
+  const { error } = await supabaseAdmin().rpc('signer_delegate', {
+    p_token_id: ctx.tokenId,
+    p_name: parsed.data.name,
+    p_email: parsed.data.email,
+    p_reason: parsed.data.reason,
+    p_token: { token_id: token.token_id, nonce: token.nonce, token_sha256: token.token_sha256 },
+    p_ip: ip,
+    p_user_agent: ua,
+  });
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
   return { ok: true };
 }

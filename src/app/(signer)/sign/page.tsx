@@ -9,6 +9,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ConsentForm } from './consent-form';
 import { Notice } from '@/components/ui';
 import { DeclineControl } from './decline';
+import { HandOffControl } from './handoff';
 import { PaperCopyControl } from './paper-withdraw';
 import { Finalising } from './finalising';
 import { AccessCodeForm, EmailCodeForm } from './gate-form';
@@ -170,6 +171,7 @@ async function Sign() {
         {/* a div, not a paragraph: the control carries its own dialog, which may not sit inside a <p> */}
         <div className="mt-6 flex flex-wrap gap-2">
           {openPaper ? null : <PaperCopyControl variant="quiet" />}
+          {envelope.allow_delegation && recipient.role !== 'viewer' ? <HandOffControl /> : null}
           <DeclineControl variant="quiet" label="Decline this document instead" />
         </div>
       </div>
@@ -179,7 +181,7 @@ async function Sign() {
     return <Message title="Nothing is waiting for you here" body="There is no signing step left for you on this document." />;
   }
   if (recipient.role === 'approver') {
-    return <SigningRoom mode="approve" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText={APPROVE_TEXT} />;
+    return <SigningRoom mode="approve" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText={APPROVE_TEXT} allowHandOff={envelope.allow_delegation} />;
   }
 
   const [{ data: fields }, { data: values }, { data: assets }] = await Promise.all([
@@ -211,6 +213,7 @@ async function Sign() {
       fields={roomFields}
       adopted={{ signature: kinds.has('signature'), initials: kinds.has('initials') }}
       intentText={INTENT_TEXT}
+      allowHandOff={envelope.allow_delegation}
     />
   );
 }

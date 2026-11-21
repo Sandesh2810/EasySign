@@ -56,6 +56,8 @@ export interface SignerContext {
     sealed_storage_backend: string | null;
     sealed_storage_path: string | null;
     certificate_storage_path: string | null;
+    /** D-83: the sender lets signers hand their part to someone else */
+    allow_delegation: boolean;
   };
 }
 
@@ -76,7 +78,7 @@ export async function loadSignerContext(opts: { allowUnverified?: boolean } = {}
     admin.from('recipients').select('id, name, email, role, status, is_sender, completed_at, auth_method').eq('id', tok.recipient_id).maybeSingle(),
     admin
       .from('envelopes')
-      .select('id, org_id, title, status, public_code, sender_id, final_sha256, sealed_storage_backend, sealed_storage_path, certificate_storage_path')
+      .select('id, org_id, title, status, public_code, sender_id, final_sha256, sealed_storage_backend, sealed_storage_path, certificate_storage_path, allow_delegation')
       .eq('id', tok.envelope_id)
       .maybeSingle(),
   ]);

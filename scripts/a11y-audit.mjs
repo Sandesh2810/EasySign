@@ -137,6 +137,8 @@ async function prepare() {
     const tokenId = randomUUID();
     const nonce = newNonce();
     const token = deriveToken(tokenKey, tokenId, nonce);
+    // Phase 4 slice 7 (D-83): hand-offs allowed, so the signer pages show "Hand to someone else" and the audit covers it
+    await rpc(db, 'set_delegation', { p_actor: sender.id, p_envelope_id: env.id, p_allow: true });
     await rpc(db, 'send_envelope', {
       p_actor: sender.id, p_envelope_id: env.id,
       p_tokens: [{ recipient_id: env.recipients[0].id, token_id: tokenId, nonce: nonce.toString('hex'), token_sha256: hashToken(token).toString('hex') }],

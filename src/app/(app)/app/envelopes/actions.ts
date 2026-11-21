@@ -161,6 +161,8 @@ export async function sendEnvelopeAction(_prev: ActionResult | null, formData: F
   const [after, every, max] = delivery.data === 'email' ? (REMINDER_CHOICES[String(formData.get('remind') ?? '3')] ?? REMINDER_CHOICES['3']) : REMINDER_CHOICES['0'];
   const reminders = await admin.rpc('set_reminders', { p_actor: user.id, p_envelope_id: id.data, p_after_days: after, p_every_days: every, p_max: max });
   if (reminders.error) return { ok: false, message: friendlyDbError(reminders.error.message).message };
+  const delegation = await admin.rpc('set_delegation', { p_actor: user.id, p_envelope_id: id.data, p_allow: formData.get('allow_delegation') === 'on' });
+  if (delegation.error) return { ok: false, message: friendlyDbError(delegation.error.message).message };
   const { error } = await admin.rpc('send_envelope', { p_actor: user.id, p_envelope_id: id.data, p_tokens: tokens, p_expires_at: expires, p_delivery: delivery.data });
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
   revalidatePath(`/app/envelopes/${id.data}`);
@@ -288,6 +290,38 @@ export async function correctRecipientAction(_prev: ActionResult | null, formDat
           ? 'Name corrected. Their link is unchanged.'
           : 'Nothing was changed.',
   };
+}
+
+/**
+ * D-83 (AT4.6): give an unfinished signer's or approver's part to a different person. The old link stops working at
+ * once, a fresh one is issued, what the old person started is cleared, and the handoff is recorded with the reason.
+ */
+const reassignSchema = z.object({
+  envelope_id: z.uuid(),
+  recipient_id: z.uuid(),
+  name: z.string().trim().min(1, 'Enter the new person’s name.').max(120),
+  email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address.')),
+  reason: z.string().trim().max(500, 'Keep the reason under 500 characters.').default(''),
+});
+export async function reassignRecipientAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = reassignSchema.safeParse({
+    envelope_id: formData.get('envelope_id'), recipient_id: formData.get('recipient_id'), name: formData.get('name'), email: formData.get('email'), reason: formData.get('reason') ?? '',
+  });
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Check the name and email address.' };
+  const token = mintTokenRecord(parsed.data.recipient_id);
+  const { error } = await supabaseAdmin().rpc('reassign_recipient', {
+    p_actor: user.id,
+    p_envelope_id: parsed.data.envelope_id,
+    p_recipient_id: parsed.data.recipient_id,
+    p_name: parsed.data.name,
+    p_email: parsed.data.email,
+    p_reason: parsed.data.reason,
+    p_token: { token_id: token.token_id, nonce: token.nonce, token_sha256: token.token_sha256 },
+  });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath(`/app/envelopes/${parsed.data.envelope_id}`);
+  return { ok: true, message: `Reassigned to ${parsed.data.name}. The old link no longer works; a new one was issued. Anything the previous person had started was cleared.` };
 }
 
 export async function deleteDraftAction(formData: FormData): Promise<void> {

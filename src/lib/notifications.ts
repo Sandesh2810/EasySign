@@ -40,6 +40,11 @@ export function describeNotification(kind: string, payload: unknown): NoticeView
       return { text: `${by} signed ${title}.`, path, tone: 'good' };
     case 'recipient_approved':
       return { text: `${by} approved ${title}.`, path, tone: 'good' };
+    case 'recipient_delegated': {
+      // D-83: a signer handed their part to someone else; their old link no longer works
+      const to = str(p.to, 120) || 'someone else';
+      return { text: `${by} handed ${title} to ${to}. ${by}'s link no longer works; ${to} has their own. If you share links yourself, copy ${to}'s link from the document page.`, path, tone: 'attention' };
+    }
     case 'envelope_completed':
       return { text: `${title} is complete. Everyone has finished and the sealed copy is ready to download.`, path, tone: 'good' };
     case 'envelope_declined':
