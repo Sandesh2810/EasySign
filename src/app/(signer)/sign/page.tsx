@@ -1,4 +1,7 @@
 import type { Metadata } from 'next';
+import { PRODUCT_NAME } from '@/config/brand';
+import { signerI18n } from '@/i18n/server';
+import { Text } from '../text';
 import { Suspense } from 'react';
 import { APPROVE_TEXT, CONSENT_PARAGRAPHS, INTENT_TEXT } from '@/config/legal';
 import type { FieldOptions, FieldType } from '@/lib/fields';
@@ -19,11 +22,14 @@ import { HostPinForm, InPersonGuard } from './in-person';
 import { BrandBand } from '@/components/brand-band';
 import { loadBrand } from '@/lib/branding-store';
 
-export const metadata: Metadata = { title: 'Sign document' };
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await signerI18n();
+  return { title: t('page.title') };
+}
 
 export default function SignPage() {
   return (
-    <Suspense fallback={<Message title="Loading your document…" body="This takes a moment." />}>
+    <Suspense fallback={<Message title={<Text k="page.loadingTitle" />} body={<Text k="page.loadingBody" />} />}>
       <SessionBrand />
       <Sign />
     </Suspense>
@@ -38,7 +44,7 @@ async function SessionBrand() {
   return brand ? <BrandBand brand={brand} /> : null;
 }
 
-function Message({ title, body, children }: { title: string; body: string; children?: React.ReactNode }) {
+function Message({ title, body, children }: { title: React.ReactNode; body: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-xl px-4 py-16">
       <h1 className="text-2xl font-medium text-ink">{title}</h1>
@@ -52,25 +58,28 @@ async function Sign() {
   // allowUnverified: this page also shows the code screen. Everything below the gate check runs only
   // for a session that has passed it (or needs none).
   const ctx = await loadSignerContext({ allowUnverified: true, allowLocked: true });
+  const { t, locale } = await signerI18n();
   if (!ctx) {
-    return <Message title="Your signing session has ended" body="For your security a signing session lasts two hours. Open the link from your email again to continue where you left off." />;
+    return <Message title={t('page.endedTitle')} body={t('page.endedBody')} />;
   }
   const { envelope, recipient } = ctx;
+  // D-95: later emails to this person use the language they read the page in
+  if (recipient.locale !== locale) await supabaseAdmin().rpc('signer_set_locale', { p_token_id: ctx.tokenId, p_locale: locale });
   // D-86: in-person signing on the host's device
   const host = ctx.inPerson;
   if (host?.state === 'ended') {
-    return <Message title="This in-person signing has ended" body={`Please hand the device back to ${host.hostName}. They can start it again from the document if needed.`} />;
+    return <Message title={t('page.ipEndedTitle')} body={t('page.ipEndedBody', { host: host.hostName })} />;
   }
   if (host?.state === 'locked') {
     return (
-      <Message title="The screen is locked" body={`For privacy this screen locked itself. Please hand the device to ${host.hostName} to unlock it.`}>
+      <Message title={t('page.ipLockedTitle')} body={t('page.ipLockedBody', { host: host.hostName })}>
         <HostPinForm mode="unlock" hostName={host.hostName} />
       </Message>
     );
   }
   if (host && (recipient.status === 'signed' || recipient.status === 'approved')) {
     return (
-      <Message title={`Thank you, ${recipient.name}. Your signature is recorded.`} body={`Please hand the device back to ${host.hostName} now. A copy of the completed document will be sent to your email address.`}>
+      <Message title={t('page.ipThanksTitle', { name: recipient.name })} body={t('page.ipThanksBody', { host: host.hostName })}>
         <HostPinForm mode="handback" hostName={host.hostName} />
       </Message>
     );
@@ -78,25 +87,23 @@ async function Sign() {
   const guard = (node: React.ReactNode) => (host ? <InPersonGuard hostName={host.hostName} signerName={recipient.name}>{node}</InPersonGuard> : node);
   const admin = supabaseAdmin();
   if (ctx.onHold) {
-    return <Message title="This document is on hold" body="This document is on hold. YouNMeSign has suspended the account that sent it while a concern is being looked into. You cannot sign it right now. Do not send money or personal details to anyone because of this document. If you know the sender, contact them another way." />;
+    return <Message title={t('page.holdTitle')} body={t('page.holdBody', { product: PRODUCT_NAME })} />;
   }
   if (ctx.gate) {
     // Nothing about the document is shown here beyond the sender's check itself: no title, no pages.
     const { data } = await admin.rpc('signer_auth_state', { p_token_id: ctx.tokenId });
     const state = (Array.isArray(data) ? data[0] : null) as { locked_until: string | null; otp_status: 'none' | 'sending' | 'sent' | 'delayed' | 'failed' } | null;
-    const lockedText = state?.locked_until ? lockedMessage(state.locked_until) : null;
+    const lockedText = state?.locked_until ? lockedMessage(t, state.locked_until) : null;
     return (
       <div className="mx-auto max-w-xl px-4 py-12">
-        <h1 className="text-2xl font-medium text-ink">One more step before your document opens</h1>
-        <p className="mt-3 text-base text-ink-body">
-          Hello {recipient.name}. The sender asked for an extra check that it is really you. This protects you if someone else gets hold of your link.
-        </p>
+        <h1 className="text-2xl font-medium text-ink">{t('page.gateTitle')}</h1>
+        <p className="mt-3 text-base text-ink-body">{t('page.gateBody', { name: recipient.name })}</p>
         {ctx.gate === 'access_code' ? (
           <AccessCodeForm lockedText={lockedText} />
         ) : (
           <EmailCodeForm maskedEmail={maskEmail(recipient.email)} otpStatus={state?.otp_status ?? 'none'} lockedText={lockedText} />
         )}
-        <p className="mt-8 text-sm text-ink-muted">You get five tries. After that the link is locked for a while so that nobody can guess the code.</p>
+        <p className="mt-8 text-sm text-ink-muted">{t('page.gateTries')}</p>
       </div>
     );
   }
@@ -108,52 +115,52 @@ async function Sign() {
       const when = by?.completed_at ? new Date(by.completed_at as string).toISOString().slice(0, 10) : null;
       return (
         <Message
-          title="Already completed"
-          body={`${(by?.name as string | undefined) ?? 'Another member'} signed "${envelope.title}" for your signing group "${me.signing_group as string}"${when ? ` on ${when}` : ''}. Nothing more is needed from you.`}
+          title={t('page.groupTitle')}
+          body={t(when ? 'page.groupBody' : 'page.groupBodyNoDate', { by: (by?.name as string | undefined) ?? t('page.anotherMember'), title: envelope.title, group: me.signing_group as string, date: when ?? '' })}
         />
       );
     }
   }
   const { data: profile } = await admin.from('profiles').select('display_name').eq('id', envelope.sender_id).maybeSingle();
-  const senderName = recipient.is_sender ? 'you' : (profile?.display_name as string | undefined) || 'the sender';
+  const senderName = (profile?.display_name as string | undefined) || t('page.theSender');
 
   if (envelope.status === 'completed') {
     return (
-      <Message title="This document is complete" body={`Everyone has signed "${envelope.title}". Download your copy and keep it somewhere safe.`}>
+      <Message title={t('page.completeTitle')} body={t('page.completeBody', { title: envelope.title })}>
         <p className="mt-6 flex flex-wrap gap-3">
           <a
             href="/api/sign/document?part=sealed"
             className="inline-flex min-h-11 items-center justify-center rounded-pill bg-ink px-6 text-base font-medium text-on-ink no-underline hover:opacity-90"
           >
-            Download the signed PDF
+            {t('page.downloadPdf')}
           </a>
           <a
             href="/api/sign/document?part=certificate"
             className="inline-flex min-h-11 items-center justify-center rounded-pill border border-control-border bg-surface px-6 text-base font-medium text-ink no-underline hover:bg-surface-sand"
           >
-            Download the certificate
+            {t('page.downloadCertificate')}
           </a>
         </p>
         <dl className="mt-8 grid grid-cols-1 gap-2 text-sm">
-          <dt className="text-ink-muted">Verification code</dt>
+          <dt className="text-ink-muted">{t('page.verificationCode')}</dt>
           <dd className="font-mono text-ink">{envelope.public_code}</dd>
-          <dt className="mt-2 text-ink-muted">SHA-256 of the signed PDF</dt>
+          <dt className="mt-2 text-ink-muted">{t('page.sha')}</dt>
           <dd className="break-all font-mono text-xs text-ink">{envelope.final_sha256}</dd>
         </dl>
-        <p className="mt-6 text-sm text-ink-muted">This link keeps working for downloads until {new Date(ctx.expiresAt).toISOString().slice(0, 10)}.</p>
+        <p className="mt-6 text-sm text-ink-muted">{t('page.downloadUntil', { date: new Date(ctx.expiresAt).toISOString().slice(0, 10) })}</p>
       </Message>
     );
   }
   if (!['sent', 'in_progress', 'failed_sealing'].includes(envelope.status)) {
-    return <Message title="This document is no longer open for signing" body={`Ask ${senderName === 'you' ? 'the sender' : senderName} if you think this is a mistake.`} />;
+    return <Message title={t('page.closedTitle')} body={t('page.closedBody', { sender: recipient.is_sender ? t('page.theSender') : senderName })} />;
   }
-  const senderLine = recipient.is_sender ? 'You are signing your own document' : `Sent by ${senderName}`;
+  const senderLine = recipient.is_sender ? t('page.senderOwn') : t('page.senderBy', { sender: senderName });
   // D-84: this person's private conversation with the sender (not shown to someone signing their own document)
   const questions = async () => {
     if (recipient.is_sender || host) return null;
     const { data } = await admin.from('envelope_comments').select('id, author_kind, body, created_at').eq('recipient_id', recipient.id).order('created_at');
     const thread: ThreadItem[] = (data ?? []).map((c) => ({ id: c.id as string, mine: c.author_kind === 'signer', body: c.body as string, at: c.created_at as string }));
-    return <QuestionsPanel thread={thread} senderName={senderName === 'you' ? 'the sender' : senderName} />;
+    return <QuestionsPanel thread={thread} senderName={senderName} />;
   };
   if (recipient.status === 'signed' || recipient.status === 'approved') {
     const { count: stillWaiting } = await admin
@@ -165,13 +172,13 @@ async function Sign() {
     if ((stillWaiting ?? 0) > 0) {
       return (
         <Message
-          title={recipient.status === 'approved' ? 'Thank you. Your approval is recorded.' : 'Thank you. Your signature is recorded.'}
-          body="Other people still need to finish this document. When everyone has, the completed document will be available through this same link, and by email if the sender is using email."
+          title={recipient.status === 'approved' ? t('page.recordedApproval') : t('page.recordedSignature')}
+          body={t('page.recordedBody')}
         />
       );
     }
     return (
-      <Message title="Thank you. Everyone has finished." body="The final document is being prepared. This page will offer the download as soon as it is ready, usually within a minute.">
+      <Message title={t('page.allDoneTitle')} body={t('page.allDoneBody')}>
         <Finalising />
       </Message>
     );
@@ -191,18 +198,22 @@ async function Sign() {
         <h1 className="mt-1 text-2xl font-medium text-ink">{envelope.title}</h1>
         {lastWithdrawn?.withdrawn_at ? (
           <div className="mt-6">
-            <Notice tone="info">
-              You withdrew your consent to sign electronically. The sender has been told. If you change your mind, you can agree again below and start over.
-            </Notice>
+            <Notice tone="info">{t('page.withdrawn')}</Notice>
           </div>
         ) : null}
         {openPaper ? (
           <div className="mt-4">
-            <Notice tone="info">You asked for a paper copy. The sender has been told.</Notice>
+            <Notice tone="info">{t('page.paperAsked')}</Notice>
           </div>
         ) : null}
-        <h2 className="mt-8 text-lg font-medium text-ink">Before you start: {recipient.role === 'approver' ? 'approving' : 'signing'} electronically</h2>
-        <div className="mt-3 flex flex-col gap-3 text-base text-ink-body">
+        <h2 className="mt-8 text-lg font-medium text-ink">{recipient.role === 'approver' ? t('page.beforeApproving') : t('page.beforeSigning')}</h2>
+        {/* D-95: the legal text stays in reviewed English in every language, and says so */}
+        {locale !== 'en' ? (
+          <div className="mt-3">
+            <Notice tone="info">{t('common.legalInEnglish')}</Notice>
+          </div>
+        ) : null}
+        <div lang="en" dir="ltr" className="mt-3 flex flex-col gap-3 text-base text-ink-body">
           {CONSENT_PARAGRAPHS.map((p) => (
             <p key={p}>{p}</p>
           ))}
@@ -213,13 +224,13 @@ async function Sign() {
         <div className="mt-6 flex flex-wrap gap-2">
           {openPaper ? null : <PaperCopyControl variant="quiet" />}
           {envelope.allow_delegation && recipient.role !== 'viewer' && !host ? <HandOffControl /> : null}
-          <DeclineControl variant="quiet" label="Decline this document instead" />
+          <DeclineControl variant="quiet" label={t('page.declineInstead')} />
         </div>
       </div>
     );
   }
   if (recipient.status !== 'consented') {
-    return <Message title="Nothing is waiting for you here" body="There is no signing step left for you on this document." />;
+    return <Message title={t('page.nothingTitle')} body={t('page.nothingBody')} />;
   }
   if (recipient.role === 'approver') {
     return guard(<SigningRoom mode="approve" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText={APPROVE_TEXT} allowHandOff={envelope.allow_delegation && !host} questions={await questions()} />);

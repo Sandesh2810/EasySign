@@ -44,7 +44,7 @@ export interface SignerContext {
   gate: SignerGate | null;
   /** The sender's account is suspended and the document is still open: nothing can be done with it for now. */
   onHold: boolean;
-  recipient: { id: string; name: string; email: string; role: string; status: string; is_sender: boolean; completed_at: string | null };
+  recipient: { id: string; name: string; email: string; role: string; status: string; is_sender: boolean; completed_at: string | null; locale: string | null };
   envelope: {
     id: string;
     org_id: string;
@@ -84,7 +84,7 @@ export async function loadSignerContext(opts: { allowUnverified?: boolean; allow
   const linkDead = Boolean(tok.revoked_at) || new Date(tok.expires_at as string).getTime() <= Date.now();
   if (linkDead && !(inPerson && opts.allowLocked)) return null;
   const [{ data: recipient }, { data: envelope }] = await Promise.all([
-    admin.from('recipients').select('id, name, email, role, status, is_sender, completed_at, auth_method').eq('id', tok.recipient_id).maybeSingle(),
+    admin.from('recipients').select('id, name, email, role, status, is_sender, completed_at, auth_method, locale').eq('id', tok.recipient_id).maybeSingle(),
     admin
       .from('envelopes')
       .select('id, org_id, title, status, public_code, sender_id, final_sha256, sealed_storage_backend, sealed_storage_path, certificate_storage_path, allow_delegation')

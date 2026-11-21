@@ -4,8 +4,11 @@
 // A replaced file is removed. Nothing is ever served back to the signer from here.
 import { createHash, randomUUID } from 'node:crypto';
 import type { NextRequest } from 'next/server';
-import { allow, TOO_MANY } from '@/lib/rate-limit';
-import { friendlyDbError, isSameOrigin, json } from '@/lib/request-guard';
+import { PRODUCT_NAME } from '@/config/brand';
+import { signerI18n } from '@/i18n/server';
+import { signerDbError } from '@/i18n/db-messages';
+import { allow } from '@/lib/rate-limit';
+import { isSameOrigin, json } from '@/lib/request-guard';
 import { loadSignerContext, requestEvidence } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { sniffUpload } from '@/pdf/image-to-pdf';
@@ -17,12 +20,13 @@ const EXT = { pdf: 'pdf', png: 'png', jpeg: 'jpg' } as const;
 const TYPE = { pdf: 'application/pdf', png: 'image/png', jpeg: 'image/jpeg' } as const;
 
 export async function POST(request: NextRequest) {
-  if (!isSameOrigin(request)) return json(403, { error: 'This request did not come from YouNMeSign.' });
+  const { t } = await signerI18n();
+  if (!isSameOrigin(request)) return json(403, { error: t('common.notFromUs', { product: PRODUCT_NAME }) });
   const ctx = await loadSignerContext();
-  if (!ctx) return json(401, { error: 'Open your signing link again.' });
-  if (ctx.onHold) return json(423, { error: 'This document is on hold and cannot be changed right now.' });
-  if (!(await allow({ bucket: 'sign_attach', limit: 30, windowSeconds: 3600 }, ctx.tokenId))) return json(429, { error: TOO_MANY });
-  if (Number(request.headers.get('content-length') ?? 0) > MAX_BYTES + 256 * 1024) return json(413, { error: 'Files can be up to 5 MB.' });
+  if (!ctx) return json(401, { error: t('attach.errOpenAgain') });
+  if (ctx.onHold) return json(423, { error: t('attach.errHold') });
+  if (!(await allow({ bucket: 'sign_attach', limit: 30, windowSeconds: 3600 }, ctx.tokenId))) return json(429, { error: t('common.tooMany') });
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_BYTES + 256 * 1024) return json(413, { error: t('attach.errSize') });
 
   let fieldId = '';
   let file: File | null = null;
@@ -32,13 +36,13 @@ export async function POST(request: NextRequest) {
     const f = form.get('file');
     if (f instanceof File) file = f;
   } catch {
-    return json(400, { error: 'The file could not be read. Try again.' });
+    return json(400, { error: t('attach.errRead') });
   }
-  if (!/^[0-9a-f-]{36}$/.test(fieldId) || !file || file.size === 0) return json(400, { error: 'Choose a file to attach.' });
-  if (file.size > MAX_BYTES) return json(413, { error: 'Files can be up to 5 MB.' });
+  if (!/^[0-9a-f-]{36}$/.test(fieldId) || !file || file.size === 0) return json(400, { error: t('attach.errChoose') });
+  if (file.size > MAX_BYTES) return json(413, { error: t('attach.errSize') });
   const bytes = new Uint8Array(await file.arrayBuffer());
   const kind = sniffUpload(bytes);
-  if (!kind) return json(415, { error: 'Attach a PDF, PNG or JPG file.' });
+  if (!kind) return json(415, { error: t('attach.errType') });
   if (kind === 'pdf') {
     // D-89 F5: the sender will open this file; scripts, automatic actions, files hidden inside and decompression
     // bombs are refused (signed PDFs and form fields are fine in an attachment)
@@ -52,7 +56,7 @@ export async function POST(request: NextRequest) {
   try {
     await store.put('attachments', path, bytes, { contentType: TYPE[kind] });
   } catch {
-    return json(502, { error: 'The file could not be stored. Try again.' });
+    return json(502, { error: t('attach.errStore') });
   }
   const sha = createHash('sha256').update(bytes).digest('hex');
   const name = (file.name || `attachment.${EXT[kind]}`).replace(/^.*[\\/]/, '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200);
@@ -63,7 +67,7 @@ export async function POST(request: NextRequest) {
   });
   if (error) {
     await store.remove('attachments', path).catch(() => {});
-    return json(400, { error: friendlyDbError(error.message).message });
+    return json(400, { error: signerDbError(t, error.message).message });
   }
   if (typeof old === 'string' && old) await store.remove('attachments', old).catch(() => {}); // the file it replaced
   return json(200, { ok: true, value: `${name.slice(0, 120)} · SHA-256 ${sha.slice(0, 16)}` });

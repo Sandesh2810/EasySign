@@ -2,6 +2,9 @@
 // Single column, system fonts with web-safe fallbacks, one clear button, and a full plain-text version.
 // Every value that comes from a person is escaped.
 import { PRODUCT_NAME } from '@/config/brand';
+import { translator } from '@/i18n/catalog';
+import { dirOf, type Locale } from '@/i18n/config';
+import { format, type MessageKey, type T, type Vars } from '@/i18n/format';
 
 export const esc = (s: string) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -15,14 +18,19 @@ export interface RenderedEmail {
   text: string;
 }
 
-function layout(opts: { preheader: string; heading: string; paragraphs: string[]; button?: { label: string; url: string }; footnote?: string }): string {
+/** D-95: a message for the HTML version: the words are escaped, the values are given as ready HTML. */
+const th = (t: T, key: MessageKey, vars: Vars = {}) => format(esc(t(key)), vars);
+
+function layout(opts: { preheader: string; heading: string; paragraphs: string[]; button?: { label: string; url: string }; footnote?: string; locale?: Locale }): string {
+  const locale = opts.locale ?? 'en';
+  const t = translator(locale);
   const p = opts.paragraphs.map((t) => `<p style="margin:0 0 16px;font-size:16px;line-height:24px;color:#373330;">${t}</p>`).join('');
   const button = opts.button
     ? `<p style="margin:24px 0;"><a href="${esc(opts.button.url)}" style="display:inline-block;background:#1a1818;color:#fffcf4;text-decoration:none;font-size:16px;line-height:20px;padding:14px 28px;border-radius:9999px;">${esc(opts.button.label)}</a></p>
-       <p style="margin:0 0 16px;font-size:13px;line-height:20px;color:#5e5a55;">If the button does not work, copy this address into your browser:<br><span style="word-break:break-all;color:#4e57b8;">${esc(opts.button.url)}</span></p>`
+       <p style="margin:0 0 16px;font-size:13px;line-height:20px;color:#5e5a55;">${esc(t('email.buttonFallback'))}<br><span style="word-break:break-all;color:#4e57b8;">${esc(opts.button.url)}</span></p>`
     : '';
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(opts.heading)}</title></head>
+<html lang="${locale}"${dirOf(locale) === 'rtl' ? ' dir="rtl"' : ''}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(opts.heading)}</title></head>
 <body style="margin:0;background:#f5f4ef;font-family:'Hanken Grotesk','Helvetica Neue',Arial,sans-serif;">
 <div style="display:none;max-height:0;overflow:hidden;">${esc(opts.preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f4ef;"><tr><td align="center" style="padding:32px 16px;">
@@ -61,104 +69,107 @@ export function verifyEmailTemplate(v: { name: string; confirmUrl: string }): Re
 /** What the person receiving a request is asked to do. */
 export type RequestPurpose = 'sign' | 'approve' | 'view';
 
-const REQUEST_WORDING: Record<RequestPurpose, { subject: string; heading: string; verb: string; button: string; act: string }> = {
-  sign: { subject: 'to sign', heading: 'A document is waiting for your signature', verb: 'review and sign', button: 'Review and sign', act: 'sign as you' },
-  approve: { subject: 'to approve', heading: 'A document is waiting for your approval', verb: 'review and approve', button: 'Review and approve', act: 'approve as you' },
-  view: { subject: 'to read', heading: 'A document has been shared with you', verb: 'read', button: 'Open the document', act: 'open it' },
-};
-
-export function signatureRequestTemplate(v: { signerName: string; senderName: string; title: string; signUrl: string; expiresOn: string; purpose?: RequestPurpose; reminder?: boolean }): RenderedEmail {
-  const w = REQUEST_WORDING[v.purpose ?? 'sign'];
-  const subject = oneLine(v.reminder ? `Reminder: "${v.title}" is still waiting for you ${w.subject}` : `${v.senderName} sent you "${v.title}" ${w.subject}`);
-  const noAction = v.purpose === 'view' ? ' Nothing is needed from you; you will also receive the completed copy.' : ' It takes a few minutes.';
+export function signatureRequestTemplate(v: { signerName: string; senderName: string; title: string; signUrl: string; expiresOn: string; purpose?: RequestPurpose; reminder?: boolean; locale?: Locale }): RenderedEmail {
+  const t = translator(v.locale ?? 'en');
+  const P = ({ sign: 'Sign', approve: 'Approve', view: 'View' } as const)[v.purpose ?? 'sign'];
+  const k = (suffix: string) => `email.req${P}${suffix}` as MessageKey;
+  const subject = oneLine(v.reminder ? t(k('ReminderSubject'), { title: v.title }) : t(k('Subject'), { sender: v.senderName, title: v.title }));
+  const noAction = v.purpose === 'view' ? t('email.viewNoAction') : t('email.fewMinutes');
+  const button = t(k('Button'));
+  const act = t(k('Act'));
   return {
     subject,
     html: layout({
-      preheader: `${w.button}: "${v.title}".`,
-      heading: v.reminder ? `Reminder: ${w.heading.charAt(0).toLowerCase()}${w.heading.slice(1)}` : w.heading,
+      locale: v.locale,
+      preheader: t('email.reqPreheader', { button, title: v.title }),
+      heading: t(k(v.reminder ? 'ReminderHeading' : 'Heading')),
       paragraphs: [
-        `Hello ${esc(v.signerName)},`,
+        th(t, 'email.hello', { name: esc(v.signerName) }),
         v.reminder
-          ? `This is a reminder that ${esc(v.senderName)} sent you <strong>${esc(v.title)}</strong> to ${w.verb}, and it is still waiting. You do not need an account.`
-          : `${esc(v.senderName)} has sent you <strong>${esc(v.title)}</strong> to ${w.verb}.${noAction} You do not need an account.`,
+          ? `${th(t, k('ReminderBody'), { sender: esc(v.senderName), title: `<strong>${esc(v.title)}</strong>` })} ${esc(t('email.noAccount'))}`
+          : `${th(t, k('Body'), { sender: esc(v.senderName), title: `<strong>${esc(v.title)}</strong>` })} ${esc(noAction)} ${esc(t('email.noAccount'))}`,
       ],
-      button: { label: w.button, url: v.signUrl },
-      footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can ${w.act}. If you were not expecting this document, ignore this email, or open the link and choose “Report this document” at the bottom of the page: opening it signs nothing.`,
+      button: { label: button, url: v.signUrl },
+      footnote: th(t, 'email.reqFootnote', { date: esc(v.expiresOn), act: esc(act) }),
     }),
     text: [
-      `Hello ${v.signerName},`,
+      t('email.hello', { name: v.signerName }),
       '',
       v.reminder
-        ? `This is a reminder that ${v.senderName} sent you "${v.title}" to ${w.verb}, and it is still waiting. You do not need an account. Open this link:`
-        : `${v.senderName} has sent you "${v.title}" to ${w.verb}.${noAction} You do not need an account. Open this link:`,
+        ? `${t(k('ReminderBody'), { sender: v.senderName, title: `"${v.title}"` })} ${t('email.noAccount')} ${t('email.openThisLink')}`
+        : `${t(k('Body'), { sender: v.senderName, title: `"${v.title}"` })} ${noAction} ${t('email.noAccount')} ${t('email.openThisLink')}`,
       v.signUrl,
       '',
-      `The link is personal to you and works until ${v.expiresOn}. Do not forward this email: anyone who has the link can ${w.act}.`,
-      'If you were not expecting this document, ignore this email, or open the link and choose "Report this document" at the bottom of the page: opening it signs nothing.',
+      t('email.reqTextPersonal', { date: v.expiresOn, act }),
+      t('email.reqTextUnexpected'),
     ].join('\n'),
   };
 }
 
 /** D-84: the sender answered a person's question about a document; their link opens it again. */
-export function commentReplyTemplate(v: { name: string; senderName: string; title: string; answer: string; signUrl: string; expiresOn: string }): RenderedEmail {
-  const subject = oneLine(`${v.senderName} answered your question about "${v.title}"`);
+export function commentReplyTemplate(v: { name: string; senderName: string; title: string; answer: string; signUrl: string; expiresOn: string; locale?: Locale }): RenderedEmail {
+  const t = translator(v.locale ?? 'en');
+  const subject = oneLine(t('email.replySubject', { sender: v.senderName, title: v.title }));
   return {
     subject,
     html: layout({
-      preheader: `${v.senderName} answered your question.`,
-      heading: 'You have an answer',
+      locale: v.locale,
+      preheader: t('email.replyPreheader', { sender: v.senderName }),
+      heading: t('email.replyHeading'),
       paragraphs: [
-        `Hello ${esc(v.name)},`,
-        `${esc(v.senderName)} answered your question about <strong>${esc(v.title)}</strong>:`,
+        th(t, 'email.hello', { name: esc(v.name) }),
+        th(t, 'email.replyBody', { sender: esc(v.senderName), title: `<strong>${esc(v.title)}</strong>` }),
         `<span style="display:block;padding:12px 16px;border-left:3px solid #e3e0d7;white-space:pre-wrap;">${esc(v.answer)}</span>`,
-        'The whole conversation is on the document page. Nothing has been signed.',
+        esc(t('email.replyConversation')),
       ],
-      button: { label: 'Open the document', url: v.signUrl },
-      footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can act on the document.`,
+      button: { label: t('email.replyOpen'), url: v.signUrl },
+      footnote: th(t, 'email.replyFootnote', { date: esc(v.expiresOn) }),
     }),
     text: [
-      `Hello ${v.name},`,
+      t('email.hello', { name: v.name }),
       '',
-      `${v.senderName} answered your question about "${v.title}":`,
+      t('email.replyBody', { sender: v.senderName, title: `"${v.title}"` }),
       '',
       v.answer,
       '',
-      'The whole conversation is on the document page. Nothing has been signed. Open this link:',
+      `${t('email.replyConversation')} ${t('email.openThisLink')}`,
       v.signUrl,
       '',
-      `The link is personal to you and works until ${v.expiresOn}. Do not forward this email: anyone who has the link can act on the document.`,
+      t('email.replyTextFootnote', { date: v.expiresOn }),
     ].join('\n'),
   };
 }
 
 /** Tells the sender that a document reached its expiry date before everyone finished. */
 /** The six-digit code a signer asked for on the code screen. No link: the code is typed into the page they already have open. */
-export function otpTemplate(v: { name: string; title: string; code: string; minutes: number }): RenderedEmail {
+export function otpTemplate(v: { name: string; title: string; code: string; minutes: number; locale?: Locale }): RenderedEmail {
+  const t = translator(v.locale ?? 'en');
   const spaced = `${v.code.slice(0, 3)} ${v.code.slice(3)}`;
-  const subject = oneLine(`Your code to open "${v.title}"`);
+  const subject = oneLine(t('email.otpSubject', { title: v.title }));
   return {
     subject,
     html: layout({
-      preheader: `Use this code within ${v.minutes} minutes.`,
-      heading: 'Your code',
+      locale: v.locale,
+      preheader: t('email.otpPreheader', { minutes: v.minutes }),
+      heading: t('email.otpHeading'),
       paragraphs: [
-        `Hello ${esc(v.name)},`,
-        `You asked for a code to open <strong>${esc(v.title)}</strong>. Type it into the page where you asked for it:`,
-        `<span style="display:inline-block;font-size:32px;line-height:40px;letter-spacing:0.12em;font-weight:600;color:#1a1818;">${esc(spaced)}</span>`,
-        `The code works once and for ${v.minutes} minutes.`,
+        th(t, 'email.hello', { name: esc(v.name) }),
+        th(t, 'email.otpBody', { title: `<strong>${esc(v.title)}</strong>` }),
+        `<span dir="ltr" style="display:inline-block;font-size:32px;line-height:40px;letter-spacing:0.12em;font-weight:600;color:#1a1818;">${esc(spaced)}</span>`,
+        th(t, 'email.otpValidity', { minutes: v.minutes }),
       ],
-      footnote: 'If you did not ask for this code, you can ignore this email: nobody can open the document without it. Never give this code to anyone, including someone who says they are from ' + esc(PRODUCT_NAME) + '.',
+      footnote: th(t, 'email.otpFootnote', { product: esc(PRODUCT_NAME) }),
     }),
     text: [
-      `Hello ${v.name},`,
+      t('email.hello', { name: v.name }),
       '',
-      `You asked for a code to open "${v.title}". Type it into the page where you asked for it:`,
+      t('email.otpBody', { title: `"${v.title}"` }),
       '',
       `    ${spaced}`,
       '',
-      `The code works once and for ${v.minutes} minutes.`,
+      t('email.otpValidity', { minutes: v.minutes }),
       '',
-      `If you did not ask for this code, you can ignore this email: nobody can open the document without it. Never give this code to anyone, including someone who says they are from ${PRODUCT_NAME}.`,
+      t('email.otpFootnote', { product: PRODUCT_NAME }),
     ].join('\n'),
   };
 }
@@ -222,27 +233,29 @@ export function expiredTemplate(v: { name: string; title: string; openUrl: strin
 }
 
 /** Tells someone who had already been asked that the sender has cancelled the document. */
-export function voidedTemplate(v: { name: string; senderName: string; title: string }): RenderedEmail {
-  const subject = oneLine(`Cancelled: "${v.title}"`);
+export function voidedTemplate(v: { name: string; senderName: string; title: string; locale?: Locale }): RenderedEmail {
+  const t = translator(v.locale ?? 'en');
+  const subject = oneLine(t('email.voidSubject', { title: v.title }));
   return {
     subject,
     html: layout({
-      preheader: `${v.senderName} cancelled this document. Nothing more is needed from you.`,
-      heading: 'This document was cancelled',
+      locale: v.locale,
+      preheader: t('email.voidPreheader', { sender: v.senderName }),
+      heading: t('email.voidHeading'),
       paragraphs: [
-        `Hello ${esc(v.name)},`,
-        `${esc(v.senderName)} has cancelled <strong>${esc(v.title)}</strong>. The link you were sent no longer works and nothing more is needed from you.`,
-        'If you had already signed, your signature does not take effect: the document was never completed.',
+        th(t, 'email.hello', { name: esc(v.name) }),
+        th(t, 'email.voidBody', { sender: esc(v.senderName), title: `<strong>${esc(v.title)}</strong>` }),
+        esc(t('email.voidSigned')),
       ],
-      footnote: `If you have questions, contact ${esc(v.senderName)} directly. Replies to this email are not read.`,
+      footnote: th(t, 'email.voidFootnote', { sender: esc(v.senderName) }),
     }),
     text: [
-      `Hello ${v.name},`,
+      t('email.hello', { name: v.name }),
       '',
-      `${v.senderName} has cancelled "${v.title}". The link you were sent no longer works and nothing more is needed from you.`,
-      'If you had already signed, your signature does not take effect: the document was never completed.',
+      t('email.voidBody', { sender: v.senderName, title: `"${v.title}"` }),
+      t('email.voidSigned'),
       '',
-      `If you have questions, contact ${v.senderName} directly.`,
+      t('email.voidTextFootnote', { sender: v.senderName }),
     ].join('\n'),
   };
 }
@@ -276,27 +289,29 @@ export function declinedTemplate(v: { name: string; title: string; declinedBy: s
   };
 }
 
-export function completionTemplate(v: { name: string; title: string; code: string; finalSha256: string; openUrl?: string }): RenderedEmail {
-  const subject = oneLine(`Completed: "${v.title}"`);
+export function completionTemplate(v: { name: string; title: string; code: string; finalSha256: string; openUrl?: string; locale?: Locale }): RenderedEmail {
+  const t = translator(v.locale ?? 'en');
+  const subject = oneLine(t('email.doneSubject', { title: v.title }));
   return {
     subject,
     html: layout({
-      preheader: 'Everyone has signed. Your copy is attached.',
-      heading: 'Everyone has signed',
+      locale: v.locale,
+      preheader: t('email.donePreheader'),
+      heading: t('email.doneHeading'),
       paragraphs: [
-        `Hello ${esc(v.name)},`,
-        `<strong>${esc(v.title)}</strong> is complete. The signed PDF and its certificate of completion are attached to this email. Keep them somewhere safe.`,
-        `Verification code: <span style="font-family:Consolas,Menlo,monospace;">${esc(v.code)}</span>`,
+        th(t, 'email.hello', { name: esc(v.name) }),
+        th(t, 'email.doneBody', { title: `<strong>${esc(v.title)}</strong>` }),
+        th(t, 'email.doneCode', { code: `<span style="font-family:Consolas,Menlo,monospace;">${esc(v.code)}</span>` }),
       ],
-      button: v.openUrl ? { label: 'Open in ' + PRODUCT_NAME, url: v.openUrl } : undefined,
-      footnote: `SHA-256 of the signed PDF: <span style="word-break:break-all;font-family:Consolas,Menlo,monospace;">${esc(v.finalSha256)}</span>`,
+      button: v.openUrl ? { label: t('email.doneOpen', { product: PRODUCT_NAME }), url: v.openUrl } : undefined,
+      footnote: th(t, 'email.doneSha', { sha: `<span style="word-break:break-all;font-family:Consolas,Menlo,monospace;">${esc(v.finalSha256)}</span>` }),
     }),
     text: [
-      `Hello ${v.name},`,
+      t('email.hello', { name: v.name }),
       '',
-      `"${v.title}" is complete. The signed PDF and its certificate of completion are attached. Keep them somewhere safe.`,
-      `Verification code: ${v.code}`,
-      `SHA-256 of the signed PDF: ${v.finalSha256}`,
+      t('email.doneTextBody', { title: `"${v.title}"` }),
+      t('email.doneCode', { code: v.code }),
+      t('email.doneSha', { sha: v.finalSha256 }),
       ...(v.openUrl ? ['', v.openUrl] : []),
     ].join('\n'),
   };
@@ -338,12 +353,13 @@ const COLOR = /^#[0-9A-Fa-f]{6}$/;
  * button the brand colours (the pair passed the contrast check when it was saved), and adds the footer to the HTML and
  * the plain text. Everything from the workspace is escaped; colours that are not "#RRGGBB" are ignored.
  */
-export function brandEmail(email: RenderedEmail, brand: EmailBrand | null): RenderedEmail {
+export function brandEmail(email: RenderedEmail, brand: EmailBrand | null, locale: Locale = 'en'): RenderedEmail {
+  const t = translator(locale);
   if (!brand || !COLOR.test(brand.color) || !COLOR.test(brand.textColor)) return email;
   const name = oneLine(brand.name) || PRODUCT_NAME;
   const header =
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;"><tr><td style="background:${brand.color};color:${brand.textColor};padding:12px 16px;border-radius:12px;font-size:16px;line-height:22px;font-weight:600;">${esc(name)}</td></tr></table>` +
-    `<p style="margin:0 0 24px;font-size:12px;line-height:18px;color:#5e5a55;">Sent with ${esc(PRODUCT_NAME)}</p>`;
+    `<p style="margin:0 0 24px;font-size:12px;line-height:18px;color:#5e5a55;">${th(t, 'email.sentWith', { product: esc(PRODUCT_NAME) })}</p>`;
   const footer = brand.footer?.trim()
     ? `<p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #e3e0d7;font-size:13px;line-height:20px;color:#5e5a55;white-space:pre-line;">${esc(brand.footer.trim())}</p>`
     : '';
@@ -353,6 +369,6 @@ export function brandEmail(email: RenderedEmail, brand: EmailBrand | null): Rend
     .join(`background:${brand.color};color:${brand.textColor};`)
     .replace('<!--brand:footer-->', footer);
   const footerText = brand.footer?.trim() ? `\n\n--\n${brand.footer.trim()}` : '';
-  const text = `${name} (sent with ${PRODUCT_NAME})\n\n${email.text}${footerText}`;
+  const text = `${name} (${t('email.sentWithText', { product: PRODUCT_NAME })})\n\n${email.text}${footerText}`;
   return { subject: email.subject, html, text };
 }

@@ -1,11 +1,13 @@
 'use client';
 import { useState } from 'react';
 import { Button, Notice } from '@/components/ui';
+import { useT } from '@/i18n/client';
 import { submitPowerFormAction } from './actions';
 
 const INPUT = 'min-h-11 rounded-sm border border-control-border bg-surface px-3 text-base text-ink';
 
 export function PublicForm({ slug, token }: { slug: string; token: string }) {
+  const t = useT();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [website, setWebsite] = useState('');
@@ -22,7 +24,7 @@ export function PublicForm({ slug, token }: { slug: string; token: string }) {
         const res = await submitPowerFormAction({ slug, name, email, website, token }).catch((err: unknown) => {
           // the signing page opens by a redirect from the server
           if (err && typeof err === 'object' && 'digest' in err && String((err as { digest: unknown }).digest).startsWith('NEXT_REDIRECT')) throw err;
-          return { ok: false as const, message: 'We could not reach the server. Try again.' };
+          return { ok: false as const, message: t('common.offlineTryAgain') };
         });
         setBusy(false);
         if (!res.ok) setError(res.message);
@@ -30,13 +32,13 @@ export function PublicForm({ slug, token }: { slug: string; token: string }) {
     >
       <div className="flex flex-col gap-1.5">
         <label htmlFor="pf-name" className="text-sm font-medium text-ink">
-          Your full name
+          {t('form.name')}
         </label>
         <input id="pf-name" value={name} maxLength={120} required autoComplete="name" onChange={(e) => setName(e.target.value)} className={INPUT} />
       </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="pf-email" className="text-sm font-medium text-ink">
-          Your email address
+          {t('form.email')}
         </label>
         <input id="pf-email" type="email" value={email} maxLength={254} required autoComplete="email" onChange={(e) => setEmail(e.target.value)} className={INPUT} />
       </div>
@@ -48,7 +50,7 @@ export function PublicForm({ slug, token }: { slug: string; token: string }) {
       {error ? <Notice tone="danger">{error}</Notice> : null}
       <div>
         <Button type="submit" disabled={busy}>
-          {busy ? 'Preparing your document…' : 'Continue to sign'}
+          {busy ? t('form.busy') : t('form.submit')}
         </Button>
       </div>
     </form>

@@ -8,29 +8,31 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { CONSENT_VERSION, INTENT_TEXT } from '@/config/legal';
 import { computeForm, toLogicFields } from '@/lib/form-logic';
-import { allow, TOO_MANY } from '@/lib/rate-limit';
-import { friendlyDbError } from '@/lib/request-guard';
+import type { MessageKey } from '@/i18n/format';
+import { signerDbError } from '@/i18n/db-messages';
+import { signerI18n } from '@/i18n/server';
+import { allow } from '@/lib/rate-limit';
 import { consentOnFile } from '@/lib/signing/consent';
 import { mintTokenRecord } from '@/lib/signing/links';
 import { loadSignerContext, requestEvidence } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getStorage } from '@/storage';
 
-export type SignResult = { ok: true } | { ok: false; message: string };
-
-const EXPIRED = 'Your signing session has ended. Open the link from your email again.';
+/** code: the database's ES_ code when it refused (for decisions that must not depend on the wording, D-95) */
+export type SignResult = { ok: true } | { ok: false; message: string; code?: string };
 const sha256Hex = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex');
 
 export async function consentAction(_prev: SignResult | null, formData: FormData): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
-  if (formData.get('agree') !== 'on') return { ok: false, message: 'Tick the box to agree, or close this page to sign on paper instead.' };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
+  if (formData.get('agree') !== 'on') return { ok: false, message: t('act.tickBox') };
   const { ip, ua } = await requestEvidence();
   let disclosureSha: string;
   try {
     disclosureSha = await consentOnFile();
   } catch {
-    return { ok: false, message: 'Your agreement could not be recorded just now. Nothing was changed. Try again in a minute.' };
+    return { ok: false, message: t('act.consentFailed') };
   }
   const { error } = await supabaseAdmin().rpc('signer_consent', {
     p_token_id: ctx.tokenId,
@@ -39,7 +41,7 @@ export async function consentAction(_prev: SignResult | null, formData: FormData
     p_ip: ip,
     p_user_agent: ua,
   });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
   revalidatePath('/sign');
   return { ok: true };
 }
@@ -47,10 +49,11 @@ export async function consentAction(_prev: SignResult | null, formData: FormData
 /** Withdraw consent (AT3.3): clears what was filled in, blocks signing until the signer agrees again, tells the sender. */
 export async function withdrawConsentAction(reason: string, wantPaper: boolean): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
-  if (!(await allow({ bucket: 'sign_withdraw', limit: 10, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
+  if (!(await allow({ bucket: 'sign_withdraw', limit: 10, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: t('common.tooMany') };
   const text = z.string().max(500).safeParse(reason ?? '');
-  if (!text.success) return { ok: false, message: 'Keep the reason under 500 characters.' };
+  if (!text.success) return { ok: false, message: t('act.reason500') };
   const { ip, ua } = await requestEvidence();
   const { data, error } = await supabaseAdmin().rpc('signer_withdraw_consent', {
     p_token_id: ctx.tokenId,
@@ -59,8 +62,8 @@ export async function withdrawConsentAction(reason: string, wantPaper: boolean):
     p_ip: ip,
     p_user_agent: ua,
   });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
-  if (data === 'limited') return { ok: false, message: TOO_MANY };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
+  if (data === 'limited') return { ok: false, message: t('common.tooMany') };
   revalidatePath('/sign');
   return { ok: true };
 }
@@ -68,29 +71,31 @@ export async function withdrawConsentAction(reason: string, wantPaper: boolean):
 /** Ask the sender for a paper copy (AT3.3): creates a task for the sender and tells them. */
 export async function requestPaperCopyAction(note: string): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
-  if (!(await allow({ bucket: 'sign_paper', limit: 10, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
+  if (!(await allow({ bucket: 'sign_paper', limit: 10, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: t('common.tooMany') };
   const text = z.string().max(500).safeParse(note ?? '');
-  if (!text.success) return { ok: false, message: 'Keep the note under 500 characters.' };
+  if (!text.success) return { ok: false, message: t('act.note500') };
   const { ip, ua } = await requestEvidence();
   const { data, error } = await supabaseAdmin().rpc('signer_request_paper_copy', { p_token_id: ctx.tokenId, p_note: text.data, p_ip: ip, p_user_agent: ua });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
-  if (data === 'limited') return { ok: false, message: TOO_MANY };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
+  if (data === 'limited') return { ok: false, message: t('common.tooMany') };
   revalidatePath('/sign');
   return { ok: true };
 }
 
 export async function fillFieldAction(fieldId: string, value: string): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
   // every change is written to the audit trail, so the number of changes per link is bounded
-  if (!(await allow({ bucket: 'sign_fill', limit: 300, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  if (!(await allow({ bucket: 'sign_fill', limit: 300, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: t('common.tooMany') };
   const id = z.uuid().safeParse(fieldId);
   const text = z.string().max(500).safeParse(value);
-  if (!id.success || !text.success) return { ok: false, message: 'That value could not be saved. Keep it under 500 characters.' };
+  if (!id.success || !text.success) return { ok: false, message: t('act.valueTooLong') };
   const { ip, ua } = await requestEvidence();
   const { error } = await supabaseAdmin().rpc('signer_fill_field', { p_token_id: ctx.tokenId, p_field_id: id.data, p_value: text.data, p_ip: ip, p_user_agent: ua });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
   return { ok: true };
 }
 
@@ -105,20 +110,21 @@ const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 /** The browser sends a PNG (drawn, typed or made from an upload). It is decoded and re-encoded here, never stored as received. */
 export async function adoptSignatureAction(formData: FormData): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
-  if (!(await allow({ bucket: 'sign_adopt', limit: 30, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
+  if (!(await allow({ bucket: 'sign_adopt', limit: 30, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: t('common.tooMany') };
   const parsed = adoptSchema.safeParse({ kind: formData.get('kind'), method: formData.get('method'), typed_text: formData.get('typed_text') ?? '' });
   const file = formData.get('image');
-  if (!parsed.success || !(file instanceof File)) return { ok: false, message: 'That signature could not be read. Try again.' };
-  if (file.size === 0 || file.size > MAX_SIGNATURE_BYTES) return { ok: false, message: 'That signature image is too large. Try a simpler one.' };
+  if (!parsed.success || !(file instanceof File)) return { ok: false, message: t('act.sigUnreadable') };
+  if (file.size === 0 || file.size > MAX_SIGNATURE_BYTES) return { ok: false, message: t('act.sigTooLarge') };
   const input = new Uint8Array(await file.arrayBuffer());
-  if (!PNG_MAGIC.every((b, i) => input[i] === b)) return { ok: false, message: 'That signature could not be read. Try again.' };
+  if (!PNG_MAGIC.every((b, i) => input[i] === b)) return { ok: false, message: t('act.sigUnreadable') };
 
   let png: Buffer;
   try {
     const base = sharp(input, { limitInputPixels: 4_000_000, failOn: 'error' }).ensureAlpha();
     const stats = await base.clone().stats();
-    if (stats.channels.length < 4 || stats.channels[3].max < 24) return { ok: false, message: parsed.data.kind === 'signature' ? 'Draw or type your signature first.' : 'Draw or type your initials first.' };
+    if (stats.channels.length < 4 || stats.channels[3].max < 24) return { ok: false, message: parsed.data.kind === 'signature' ? t('act.drawSignature') : t('act.drawInitials') };
     const trimmed = await base
       .clone()
       .trim({ threshold: 1 })
@@ -126,7 +132,7 @@ export async function adoptSignatureAction(formData: FormData): Promise<SignResu
       .catch(() => base.clone().toBuffer());
     png = await sharp(trimmed).resize({ width: 900, height: 320, fit: 'inside', withoutEnlargement: true }).png({ compressionLevel: 9 }).toBuffer();
   } catch {
-    return { ok: false, message: 'That signature could not be read. Try again.' };
+    return { ok: false, message: t('act.sigUnreadable') };
   }
 
   const storage = getStorage();
@@ -134,7 +140,7 @@ export async function adoptSignatureAction(formData: FormData): Promise<SignResu
   try {
     await storage.put('signatures', path, new Uint8Array(png), { contentType: 'image/png' });
   } catch {
-    return { ok: false, message: 'Your signature could not be saved. Try again.' };
+    return { ok: false, message: t('act.sigSaveFailed') };
   }
   const { ip, ua } = await requestEvidence();
   const { error } = await supabaseAdmin().rpc('signer_adopt_signature', {
@@ -153,7 +159,7 @@ export async function adoptSignatureAction(formData: FormData): Promise<SignResu
     // Remove the image only when the database definitely refused it (a Postgres error code). After a
     // timeout or dropped connection the row may exist, and a row pointing at a missing file would block sealing.
     if (/^[0-9A-Z]{5}$/.test(error.code ?? '')) await storage.remove('signatures', path).catch(() => {});
-    return { ok: false, message: friendlyDbError(error.message).message };
+    return { ok: false, ...signerDbError(t, error.message) };
   }
   return { ok: true };
 }
@@ -161,10 +167,11 @@ export async function adoptSignatureAction(formData: FormData): Promise<SignResu
 /** An approver's "yes". */
 export async function approveAction(): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
   const { ip, ua } = await requestEvidence();
   const { error } = await supabaseAdmin().rpc('signer_approve', { p_token_id: ctx.tokenId, p_ip: ip, p_user_agent: ua });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
   revalidatePath('/sign');
   return { ok: true };
 }
@@ -172,25 +179,27 @@ export async function approveAction(): Promise<SignResult> {
 /** Decline: stops the document for everyone and switches off every link, including this one. */
 export async function declineAction(reason: string): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
   const text = z.string().max(1000).safeParse(reason ?? '');
-  if (!text.success) return { ok: false, message: 'Keep the reason under 1000 characters.' };
+  if (!text.success) return { ok: false, message: t('act.reason1000') };
   const { ip, ua } = await requestEvidence();
   const { error } = await supabaseAdmin().rpc('signer_decline', { p_token_id: ctx.tokenId, p_reason: text.data, p_ip: ip, p_user_agent: ua });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
   return { ok: true };
 }
 
 /** D-84: ask the sender a question about this document (kept in the document's audit trail). */
 export async function commentAction(body: string): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
-  if (!(await allow({ bucket: 'sign_comment', limit: 20, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
-  const text = z.string().trim().min(1, 'Write your question first.').max(1000, 'Keep it under 1000 characters.').safeParse(body);
-  if (!text.success) return { ok: false, message: text.error.issues[0]?.message ?? 'Write your question first.' };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
+  if (!(await allow({ bucket: 'sign_comment', limit: 20, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: t('common.tooMany') };
+  const text = z.string().trim().min(1, t('act.questionEmpty')).max(1000, t('act.question1000')).safeParse(body);
+  if (!text.success) return { ok: false, message: text.error.issues[0]?.message ?? t('act.questionEmpty') };
   const { ip, ua } = await requestEvidence();
   const { error } = await supabaseAdmin().rpc('signer_comment', { p_token_id: ctx.tokenId, p_body: text.data, p_ip: ip, p_user_agent: ua });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
   revalidatePath('/sign');
   return { ok: true };
 }
@@ -200,17 +209,19 @@ export async function commentAction(body: string): Promise<SignResult> {
  * gets a fresh one (by email when the sender sends by email; otherwise the sender shares it). The sender is told.
  */
 const delegateSchema = z.object({
-  name: z.string().trim().min(1, 'Enter the name of the person you are handing this to.').max(120),
-  email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address.')),
-  reason: z.string().trim().max(500, 'Keep the reason under 500 characters.').default(''),
+  // messages are keys, worded in the signer's language below
+  name: z.string().trim().min(1, 'act.handoffName').max(120, 'act.handoffName'),
+  email: z.string().trim().toLowerCase().max(254, 'act.handoffEmail').pipe(z.email('act.handoffEmail')),
+  reason: z.string().trim().max(500, 'act.reason500').default(''),
 });
 export async function delegateAction(input: { name: string; email: string; reason: string }): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
-  if (!(await allow({ bucket: 'sign_delegate', limit: 5, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
+  if (!(await allow({ bucket: 'sign_delegate', limit: 5, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: t('common.tooMany') };
   const parsed = delegateSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Check the name and email address.' };
-  if (parsed.data.email === ctx.recipient.email.toLowerCase()) return { ok: false, message: 'That is your own email address. Give the other person’s address.' };
+  if (!parsed.success) return { ok: false, message: t(((parsed.error.issues[0]?.message ?? '').startsWith('act.') ? parsed.error.issues[0]!.message : 'act.handoffCheck') as MessageKey) };
+  if (parsed.data.email === ctx.recipient.email.toLowerCase()) return { ok: false, message: t('act.ownEmail') };
   const { ip, ua } = await requestEvidence();
   const token = mintTokenRecord(ctx.recipient.id);
   const { error } = await supabaseAdmin().rpc('signer_delegate', {
@@ -222,15 +233,16 @@ export async function delegateAction(input: { name: string; email: string; reaso
     p_ip: ip,
     p_user_agent: ua,
   });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
   return { ok: true };
 }
 
 export async function completeAction(localDate: string): Promise<SignResult> {
   const ctx = await loadSignerContext();
-  if (!ctx) return { ok: false, message: EXPIRED };
+  const { t } = await signerI18n();
+  if (!ctx) return { ok: false, message: t('act.expired') };
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).safeParse(localDate);
-  if (!date.success) return { ok: false, message: 'Your device reported an unusual date. Check its clock and try again.' };
+  if (!date.success) return { ok: false, message: t('act.badDate') };
   const { ip, ua } = await requestEvidence();
   // D-79: which of this signer's fields their conditions hide, worked out here from the stored values (never taken from
   // the browser); a calculation that cannot be worked out stops signing rather than sealing a wrong total.
@@ -243,7 +255,7 @@ export async function completeAction(localDate: string): Promise<SignResult> {
   const form = computeForm(toLogicFields(fieldRows), (fieldId) => stored.get(fieldId) ?? '');
   const broken = [...form.computed.values()].find((c) => !c.ok);
   if (broken && !broken.ok) {
-    return { ok: false, message: `A calculated amount cannot be worked out (${broken.error}). Check the numbers you entered; if they are right, contact the sender.` };
+    return { ok: false, message: t('act.calcBroken', { error: broken.error }) };
   }
   const { error } = await admin.rpc('signer_complete', {
     p_token_id: ctx.tokenId,
@@ -253,7 +265,7 @@ export async function completeAction(localDate: string): Promise<SignResult> {
     p_user_agent: ua,
     p_hidden: [...form.hidden],
   });
-  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  if (error) return { ok: false, ...signerDbError(t, error.message) };
   revalidatePath('/sign');
   return { ok: true };
 }

@@ -175,6 +175,9 @@ async function prepare() {
     { org_id: orgId, envelope_id: sent.id, recipient_id: sent.recipients[0].id, author_kind: 'sender', author_user: sender.id, body: 'Yes, within 10%.' },
   ]);
   if (qa.error) throw new Error(`questions: ${qa.error.message}`);
+  // Phase 5 slice 6 (D-95): the signing pages in Spanish and in Arabic (right to left), each on its own document
+  const esToken = await sendWithLink(await makeEnvelope('Accessibility check (Spanish)', [{ name: 'Elena Espanol', email: 'a11y-es@example.test' }], true));
+  const arToken = await sendWithLink(await makeEnvelope('Accessibility check (Arabic)', [{ name: 'Amal Arabi', email: 'a11y-ar@example.test' }], true));
   const keyboardOnly = await makeEnvelope('Accessibility check (keyboard only)', [{ name: 'Kim Keys', email: 'a11y-keys@example.test' }], true);
   const keyboardToken = await sendWithLink(keyboardOnly);
   // Phase 4 slice 10 (D-86): a document whose only person signs in person (nothing left over from an interrupted run)
@@ -189,7 +192,7 @@ async function prepare() {
   const webhookId = randomUUID();
   await rpc(db, 'webhook_endpoint_create', { p_actor: sender.id, p_org: orgId, p_id: webhookId, p_url: 'https://hooks.example.test/a11y', p_description: 'Accessibility check', p_events: ['document.completed', 'person.completed'], p_secret_enc: `v1.${'A'.repeat(60)}` });
   await rpc(db, 'webhook_test', { p_actor: sender.id, p_id: webhookId });
-  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId, inPersonId: inPerson.id, formSlug, webhookId };
+  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId, inPersonId: inPerson.id, formSlug, webhookId, esToken, arToken };
 }
 
 /** Press Tab until the focused element's name matches, then press the key. Fails if it is never reached. */
@@ -408,6 +411,44 @@ async function main() {
     await settle(page, 2500);
     await axeCheck(page, 'Signer: after signing');
     await lighthouseCheck(page, 'Signer: after signing', `${APP}/sign`, true);
+
+    // ---- D-95 (AT5.6, automated part): the signing pages in Spanish and in Arabic ----
+    for (const [lang, name, token] of [['es', 'Spanish', data.esToken], ['ar', 'Arabic', data.arToken]]) {
+      say(`Signer path in ${name}`);
+      const ctx = await browser.createBrowserContext();
+      const lp = await ctx.newPage();
+      await lp.setBypassCSP(true);
+      await lp.setViewport({ width: 1280, height: 900 });
+      await lp.setExtraHTTPHeaders({ 'Accept-Language': `${lang},en;q=0.5` });
+      pageRef = lp;
+      await lp.goto(`${APP}/s#${token}`, { waitUntil: 'networkidle0' });
+      await lp.waitForSelector('input[name="agree"]', { timeout: 30000 });
+      const shell = await lp.$eval('main', (m) => ({ lang: m.parentElement?.getAttribute('lang'), dir: m.parentElement?.getAttribute('dir'), legal: m.querySelector('[lang="en"][dir="ltr"]') !== null }));
+      const shellOk = shell.lang === lang && shell.dir === (lang === 'ar' ? 'rtl' : 'ltr') && shell.legal;
+      results.push({ page: `Signer (${name}): page language and direction`, check: 'lang-dir', ...shell, ok: shellOk });
+      say(`  language   Signer (${name}): lang=${shell.lang} dir=${shell.dir}, legal text marked English: ${shell.legal ? 'yes' : 'NO'}`);
+      if (!shellOk) failures.push(`language: Signer (${name}) page language or direction is wrong`);
+      await axeCheck(lp, `Signer (${name}): consent`);
+      await reflowCheck(lp, `Signer (${name}): consent`);
+      await click(lp, 'input[name="agree"]');
+      await click(lp, 'main form button[type="submit"]');
+      await lp.waitForSelector('button[aria-label]', { timeout: 30000 });
+      await settle(lp, 1500);
+      await axeCheck(lp, `Signer (${name}): document`);
+      await reflowCheck(lp, `Signer (${name}): document`);
+      await lp.setViewport({ width: 375, height: 812, isMobile: true, hasTouch: true });
+      await settle(lp, 800);
+      await axeCheck(lp, `Signer (${name}): document at phone width (375 px)`);
+      await reflowCheck(lp, `Signer (${name}): document at phone width`);
+      await lp.setViewport({ width: 1280, height: 900 });
+      await settle(lp, 800);
+      await click(lp, 'button[data-field-kind="signature"]');
+      await lp.waitForSelector('[role="tablist"]', { visible: true, timeout: 15000 });
+      await axeCheck(lp, `Signer (${name}): signature dialog`);
+      await lp.keyboard.press('Escape');
+      await ctx.close();
+    }
+    pageRef = page;
 
     // ---- a second signer who uses the keyboard only (no mouse at all) ----
     say('Signer path, keyboard only');

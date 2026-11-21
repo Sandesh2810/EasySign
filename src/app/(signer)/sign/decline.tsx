@@ -4,9 +4,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Notice } from '@/components/ui';
+import { useT } from '@/i18n/client';
 import { declineAction } from './actions';
 
-export function DeclineControl({ label = 'Decline', variant = 'outline', className }: { label?: string; variant?: 'outline' | 'quiet'; className?: string }) {
+export function DeclineControl({ label, variant = 'outline', className }: { label?: string; variant?: 'outline' | 'quiet'; className?: string }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -23,7 +25,7 @@ export function DeclineControl({ label = 'Decline', variant = 'outline', classNa
     if (busy) return;
     setBusy(true);
     setError(null);
-    const res = await declineAction(reason).catch(() => ({ ok: false as const, message: 'We could not reach the server. Nothing was changed. Try again.' }));
+    const res = await declineAction(reason).catch(() => ({ ok: false as const, message: t('common.offlineNothingChanged') }));
     if (!res.ok) {
       setBusy(false);
       setError(res.message);
@@ -36,7 +38,7 @@ export function DeclineControl({ label = 'Decline', variant = 'outline', classNa
   return (
     <>
       <Button type="button" variant={variant} className={className} onClick={() => setOpen(true)}>
-        {label}
+        {label ?? t('decline.button')}
       </Button>
       {open ? (
         <dialog
@@ -47,14 +49,14 @@ export function DeclineControl({ label = 'Decline', variant = 'outline', classNa
         >
           <div className="flex flex-col gap-4 p-5 sm:p-6">
             <h2 id="decline-title" className="text-xl font-medium text-ink">
-              Decline this document?
+              {t('decline.title')}
             </h2>
             <p className="text-base text-ink-body">
-              Declining stops the document for everyone. Nobody else will be able to sign it, and the sender is told straight away. This cannot be undone; the sender would have to send a new document.
+              {t('decline.body')}
             </p>
             <div className="flex flex-col gap-1.5">
               <label htmlFor="decline-reason" className="text-sm font-medium text-ink">
-                Reason (optional; the sender will see it)
+                {t('decline.reason')}
               </label>
               <textarea
                 id="decline-reason"
@@ -68,10 +70,10 @@ export function DeclineControl({ label = 'Decline', variant = 'outline', classNa
             {error ? <Notice tone="danger">{error}</Notice> : null}
             <div className="flex flex-wrap justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => dialog.current?.close()} disabled={busy}>
-                Go back
+                {t('common.goBack')}
               </Button>
               <Button type="button" onClick={() => void decline()} disabled={busy}>
-                {busy ? 'Declining…' : 'Decline the document'}
+                {busy ? t('decline.busy') : t('decline.submit')}
               </Button>
             </div>
           </div>

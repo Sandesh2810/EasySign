@@ -3,6 +3,7 @@
 // the browser produces a transparent PNG; the server decodes and re-encodes it before storing it.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Notice } from '@/components/ui';
+import { useT } from '@/i18n/client';
 import { adoptSignatureAction } from './actions';
 
 type Method = 'drawn' | 'typed' | 'uploaded';
@@ -10,11 +11,7 @@ const W = 1200;
 const H = 400;
 const INK = '#141414';
 const SCRIPT_FONT = '"Segoe Script", "Brush Script MT", "Snell Roundhand", "Apple Chancery", "Lucida Handwriting", cursive';
-const METHODS: { id: Method; label: string }[] = [
-  { id: 'drawn', label: 'Draw' },
-  { id: 'typed', label: 'Type' },
-  { id: 'uploaded', label: 'Upload' },
-];
+const METHODS: Method[] = ['drawn', 'typed', 'uploaded'];
 
 const initialsOf = (name: string) =>
   name
@@ -25,6 +22,7 @@ const initialsOf = (name: string) =>
     .join('');
 
 export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind: 'signature' | 'initials'; signerName: string; onClose: () => void; onAdopted: (previewUrl: string) => void }) {
+  const t = useT();
   const dialog = useRef<HTMLDialogElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const drawing = useRef<{ x: number; y: number } | null>(null);
@@ -33,7 +31,7 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
   const [hasInk, setHasInk] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const noun = kind === 'signature' ? 'signature' : 'initials';
+  const sig = kind === 'signature';
 
   useEffect(() => {
     const d = dialog.current;
@@ -112,7 +110,7 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
     setError(null);
     if (!file) return;
     if (!['image/png', 'image/jpeg'].includes(file.type) || file.size > 5 * 1024 * 1024) {
-      setError('Choose a PNG or JPG picture smaller than 5 MB.');
+      setError(t('sig.errPick'));
       return;
     }
     try {
@@ -140,9 +138,9 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
       }
       ctx.putImageData(img, 0, 0);
       setHasInk(ink > 200);
-      if (ink <= 200) setError('We could not find a signature in that picture. Use dark ink on plain white paper, or draw it instead.');
+      if (ink <= 200) setError(t('sig.errNoInk'));
     } catch {
-      setError('That picture could not be opened. Try another one, or draw your signature instead.');
+      setError(t('sig.errOpen'));
     }
   };
 
@@ -156,7 +154,7 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
     const blob = await new Promise<Blob | null>((resolve) => c.toBlob(resolve, 'image/png'));
     if (!blob) {
       setBusy(false);
-      setError('Your browser could not prepare the image. Try again.');
+      setError(t('sig.errPrepare'));
       return;
     }
     const data = new FormData();
@@ -164,7 +162,7 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
     data.set('method', method);
     data.set('typed_text', method === 'typed' ? typed.trim() : '');
     data.set('image', new File([blob], `${kind}.png`, { type: 'image/png' }));
-    const res = await adoptSignatureAction(data).catch(() => ({ ok: false as const, message: 'We could not reach the server. Try again.' }));
+    const res = await adoptSignatureAction(data).catch(() => ({ ok: false as const, message: t('common.offlineTryAgain') }));
     setBusy(false);
     if (!res.ok) {
       setError(res.message);
@@ -182,19 +180,19 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
     >
       <div className="flex flex-col gap-4 p-5 sm:p-6">
         <h2 id="sig-title" className="text-xl font-medium text-ink">
-          Create your {noun}
+          {sig ? t('sig.titleSignature') : t('sig.titleInitials')}
         </h2>
-        <div role="tablist" aria-label={`How to create your ${noun}`} className="flex gap-2">
+        <div role="tablist" aria-label={sig ? t('sig.howSignature') : t('sig.howInitials')} className="flex gap-2">
           {METHODS.map((m) => (
             <button
-              key={m.id}
+              key={m}
               type="button"
               role="tab"
-              aria-selected={method === m.id}
-              onClick={() => choose(m.id)}
-              className={`min-h-11 rounded-pill px-5 text-base font-medium ${method === m.id ? 'bg-ink text-on-ink' : 'border border-control-border bg-surface text-ink hover:bg-surface-sand'}`}
+              aria-selected={method === m}
+              onClick={() => choose(m)}
+              className={`min-h-11 rounded-pill px-5 text-base font-medium ${method === m ? 'bg-ink text-on-ink' : 'border border-control-border bg-surface text-ink hover:bg-surface-sand'}`}
             >
-              {m.label}
+              {t(m === 'drawn' ? 'sig.drawn' : m === 'typed' ? 'sig.typed' : 'sig.uploaded')}
             </button>
           ))}
         </div>
@@ -202,7 +200,7 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
         {method === 'typed' ? (
           <div className="flex flex-col gap-1.5">
             <label htmlFor="sig-typed" className="text-sm font-medium text-ink">
-              Type your {kind === 'signature' ? 'full name' : 'initials'}
+              {sig ? t('sig.typeSignature') : t('sig.typeInitials')}
             </label>
             <input
               id="sig-typed"
@@ -217,19 +215,19 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
         {method === 'uploaded' ? (
           <div className="flex flex-col gap-1.5">
             <label htmlFor="sig-file" className="text-sm font-medium text-ink">
-              Picture of your {noun} (PNG or JPG, dark ink on white paper)
+              {sig ? t('sig.fileSignature') : t('sig.fileInitials')}
             </label>
             <input id="sig-file" type="file" accept="image/png,image/jpeg" onChange={(e) => void onFile(e.target.files?.[0])} className="text-base text-ink" />
           </div>
         ) : null}
-        {method === 'drawn' ? <p className="text-sm text-ink-body">Draw in the box with your finger, a pen or the mouse. Using only a keyboard? Choose Type.</p> : null}
+        {method === 'drawn' ? <p className="text-sm text-ink-body">{t('sig.drawHint')}</p> : null}
 
         <canvas
           ref={canvas}
           width={W}
           height={H}
           role="img"
-          aria-label={`Preview of your ${noun}`}
+          aria-label={sig ? t('sig.previewSignature') : t('sig.previewInitials')}
           onPointerDown={down}
           onPointerMove={move}
           onPointerUp={up}
@@ -250,16 +248,16 @@ export function SignatureDialog({ kind, signerName, onClose, onAdopted }: { kind
                   setHasInk(false);
                 }}
               >
-                Clear
+                {t('sig.clear')}
               </Button>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={() => dialog.current?.close()}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="button" onClick={() => void adopt()} disabled={!ready || busy}>
-              {busy ? 'Saving…' : `Use this ${noun}`}
+              {busy ? t('sig.saving') : sig ? t('sig.useSignature') : t('sig.useInitials')}
             </Button>
           </div>
         </div>

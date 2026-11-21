@@ -2,25 +2,26 @@ import { describe, it, expect } from 'vitest';
 import { otpTemplate } from '@/mail/templates';
 import { generateOtp, hashOtp, otpForOutboxRow } from '@/lib/signer-token';
 import { lockedMessage, triesLeft } from './gate-text';
+import { EN } from '@/i18n/catalog';
 
 const NOW = new Date('2026-11-18T12:00:00Z');
 const KEY = Buffer.alloc(32, 7).toString('base64url');
 
 describe('wording on the code screen', () => {
   it('says how long a lock lasts, in minutes or "about an hour"', () => {
-    expect(lockedMessage('2026-11-18T12:14:30Z', NOW)).toContain('locked for 15 minutes');
-    expect(lockedMessage('2026-11-18T12:00:20Z', NOW)).toContain('locked for 1 minute.');
-    expect(lockedMessage('2026-11-18T12:59:00Z', NOW)).toContain('about an hour');
+    expect(lockedMessage(EN, '2026-11-18T12:14:30Z', NOW)).toContain('locked for 15 minutes');
+    expect(lockedMessage(EN, '2026-11-18T12:00:20Z', NOW)).toContain('locked for 1 minute.');
+    expect(lockedMessage(EN, '2026-11-18T12:59:00Z', NOW)).toContain('about an hour');
   });
 
   it('says to ask the sender when only the sender can unlock', () => {
-    expect(lockedMessage('infinity', NOW)).toContain('Ask the person who sent you the document to unlock it');
-    expect(lockedMessage(null, NOW)).toContain('Ask the person who sent you');
+    expect(lockedMessage(EN, 'infinity', NOW)).toContain('Ask the person who sent you the document to unlock it');
+    expect(lockedMessage(EN, null, NOW)).toContain('Ask the person who sent you');
   });
 
   it('counts tries in plain words', () => {
-    expect(triesLeft(1)).toBe('You have 1 try left.');
-    expect(triesLeft(4)).toBe('You have 4 tries left.');
+    expect(triesLeft(EN, 1)).toBe('You have 1 try left.');
+    expect(triesLeft(EN, 4)).toBe('You have 4 tries left.');
   });
 });
 

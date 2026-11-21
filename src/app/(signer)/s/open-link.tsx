@@ -1,10 +1,12 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { ReportAbuse } from '../report-abuse';
+import { useT } from '@/i18n/client';
 
 type State = { phase: 'working' } | { phase: 'error'; message: string; waiting?: boolean; held?: boolean; token?: string };
 
 export function OpenLink() {
+  const t = useT();
   const [state, setState] = useState<State>({ phase: 'working' });
   const started = useRef(false);
 
@@ -15,7 +17,7 @@ export function OpenLink() {
       window.history.replaceState(null, '', '/s');
       setState({ phase: 'working' });
       if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
-        setState({ phase: 'error', message: 'This signing link is incomplete. Open the link from your email again, or ask the sender for a new one.' });
+        setState({ phase: 'error', message: t('link.incomplete') });
         return;
       }
       try {
@@ -30,11 +32,11 @@ export function OpenLink() {
           window.location.replace('/sign');
           return;
         }
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
         // The link did not open, so there is no session: keep the token in memory so the document can still be reported.
-        setState({ phase: 'error', waiting: res.status === 403 && /turn/i.test(body?.error ?? ''), held: res.status === 423, token, message: body?.error ?? 'This signing link could not be opened. Try again in a moment.' });
+        setState({ phase: 'error', waiting: res.status === 403 && body?.code === 'not_your_turn', held: res.status === 423, token, message: body?.error ?? t('link.cannotOpen') });
       } catch {
-        setState({ phase: 'error', message: 'We could not reach the server. Check your connection and open the link again.' });
+        setState({ phase: 'error', message: t('link.offline') });
       }
     };
     // A second link pasted into this same tab only changes the part after "#": handle that too.
@@ -47,12 +49,12 @@ export function OpenLink() {
       void exchange();
     }
     return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+  }, [t]);
 
   if (state.phase === 'error') {
     return (
       <div role="alert">
-        <h1 className="text-2xl font-medium text-ink">{state.held ? 'This document is on hold' : state.waiting ? 'It is not your turn yet' : 'This link did not open'}</h1>
+        <h1 className="text-2xl font-medium text-ink">{state.held ? t('link.titleHeld') : state.waiting ? t('link.titleWaiting') : t('link.titleFailed')}</h1>
         <p className="mt-3 text-base text-ink-body">{state.message}</p>
         {state.token ? (
           <div className="mt-8">
@@ -64,10 +66,10 @@ export function OpenLink() {
   }
   return (
     <div role="status">
-      <h1 className="text-2xl font-medium text-ink">Opening your document…</h1>
-      <p className="mt-3 text-base text-ink-body">This takes a moment.</p>
+      <h1 className="text-2xl font-medium text-ink">{t('link.opening')}</h1>
+      <p className="mt-3 text-base text-ink-body">{t('link.moment')}</p>
       <noscript>
-        <p className="mt-3 text-base text-ink">Signing needs JavaScript. Turn it on in your browser and open the link again.</p>
+        <p className="mt-3 text-base text-ink">{t('link.noscript')}</p>
       </noscript>
     </div>
   );

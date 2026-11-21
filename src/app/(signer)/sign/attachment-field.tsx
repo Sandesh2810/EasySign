@@ -2,6 +2,7 @@
 // An attachment field on the signer's page (Phase 4 slice 3, D-78): a button that opens the file chooser, uploads the
 // file to /api/sign/attachment and then shows its name. The server checks the type (by content), the size and the field.
 import { useRef, useState, type CSSProperties } from 'react';
+import { useT } from '@/i18n/client';
 
 export function AttachmentField({
   fieldId,
@@ -20,6 +21,7 @@ export function AttachmentField({
   onSaved: (value: string) => void;
   onError: (message: string | null) => void;
 }) {
+  const t = useT();
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const name = value ? value.split(' · SHA-256 ')[0] : '';
@@ -27,7 +29,7 @@ export function AttachmentField({
   const upload = async (file: File | undefined) => {
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) {
-      onError('Attachment: files can be up to 5 MB.');
+      onError(t('attach.tooBig'));
       return;
     }
     setBusy(true);
@@ -39,7 +41,7 @@ export function AttachmentField({
     setBusy(false);
     if (input.current) input.current.value = '';
     if (res?.ok && data?.ok && data.value) onSaved(data.value);
-    else onError(`Attachment: ${data?.error ?? 'the file could not be attached. Try again.'}`);
+    else onError(t('attach.failed', { error: data?.error ?? t('attach.failedDefault') }));
   };
 
   return (
@@ -49,11 +51,11 @@ export function AttachmentField({
         ref={setTarget}
         onClick={() => input.current?.click()}
         disabled={busy}
-        aria-label={value ? `Attached: ${name}. Replace the file` : `Attach a file${required ? ' (required)' : ' (optional)'}`}
+        aria-label={value ? t('attach.replace', { name }) : required ? t('attach.addRequired') : t('attach.addOptional')}
         style={{ ...style, color: '#141414', backgroundColor: value ? '#ffffff' : '#fff3bf' }}
         className="absolute flex items-center overflow-hidden whitespace-nowrap rounded-sm border-2 border-dashed border-[#141414] px-1 text-left focus-visible:outline-4"
       >
-        {busy ? 'Uploading…' : value ? `Attached: ${name}` : 'Attach a file'}
+        {busy ? t('attach.uploading') : value ? t('attach.attached', { name }) : t('attach.add')}
       </button>
       <input ref={input} type="file" accept="application/pdf,image/png,image/jpeg" tabIndex={-1} aria-hidden="true" className="sr-only" onChange={(e) => void upload(e.target.files?.[0])} />
     </>

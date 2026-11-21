@@ -5,6 +5,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
+import { signerI18n } from '@/i18n/server';
 import { verifyPin } from '@/lib/in-person';
 import { loadSignerContext, signerCookieName } from '@/lib/signing/session';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
@@ -27,15 +28,16 @@ export async function inPersonHeartbeatAction(): Promise<'active' | 'locked' | '
 }
 
 async function checkPin(pin: string, action: 'unlock' | 'end'): Promise<{ state: string; ctxEnvelope: string | null } | { error: string }> {
+  const { t } = await signerI18n();
   const parsed = pinInput.safeParse(pin);
-  if (!parsed.success) return { error: 'Enter the PIN.' };
+  if (!parsed.success) return { error: t('ip.errEnterPin') };
   const ctx = await loadSignerContext({ allowLocked: true, allowUnverified: true });
-  if (!ctx?.inPerson) return { error: 'This in-person signing has ended.' };
+  if (!ctx?.inPerson) return { error: t('ip.errEnded') };
   const admin = supabaseAdmin();
   const { data: s } = await admin.from('in_person_sessions').select('pin_hash').eq('id', ctx.inPerson.sessionId).maybeSingle();
   const ok = Boolean(s) && verifyPin(parsed.data, s!.pin_hash as string);
   const { data, error } = await admin.rpc('in_person_pin', { p_token_id: ctx.tokenId, p_ok: ok, p_action: action });
-  if (error) return { error: 'Something went wrong. Try again.' };
+  if (error) return { error: t('ip.errGeneric') };
   return { state: ok ? (data as string) : data === 'ended' ? 'locked_out' : 'wrong', ctxEnvelope: ctx.envelope.id };
 }
 
@@ -52,19 +54,21 @@ async function lockOut(): Promise<never> {
 
 /** The host unlocks the screen so the signer can carry on. */
 export async function unlockInPersonAction(pin: string): Promise<Result> {
+  const { t } = await signerI18n();
   const r = await checkPin(pin, 'unlock');
   if ('error' in r) return { ok: false, message: r.error };
   if (r.state === 'locked_out') await lockOut();
-  if (r.state === 'wrong') return { ok: false, message: 'That PIN is not right. After 5 wrong PINs the signing ends and you must sign in again.' };
+  if (r.state === 'wrong') return { ok: false, message: t('ip.errWrongPin') };
   return { ok: true };
 }
 
 /** The host takes the device back: the session ends and the host returns to the document. */
 export async function handBackAction(pin: string): Promise<Result> {
+  const { t } = await signerI18n();
   const r = await checkPin(pin, 'end');
   if ('error' in r) return { ok: false, message: r.error };
   if (r.state === 'locked_out') await lockOut();
-  if (r.state === 'wrong') return { ok: false, message: 'That PIN is not right. After 5 wrong PINs the signing ends and you must sign in again.' };
+  if (r.state === 'wrong') return { ok: false, message: t('ip.errWrongPin') };
   (await cookies()).delete(signerCookieName());
   redirect(r.ctxEnvelope ? `/app/envelopes/${r.ctxEnvelope}` : '/app');
 }

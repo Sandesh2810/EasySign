@@ -150,24 +150,29 @@ export function fieldOptionsProblem(type: FieldType, o: FieldOptions = {}): stri
   }
 }
 
-/** Why a signer's value is not accepted, or null. The database checks the same before storing it. */
-export function checkFieldValue(type: FieldType, o: FieldOptions, raw: string): string | null {
+/** D-95: why a value is not accepted, as a code (worded in the signer's language by the signing page), or the
+ * sender's own message for a custom check. */
+export type FieldCheck =
+  | { key: 'checkbox' | 'choice' | 'number' | 'whole' | 'decimalsOne' | 'decimals' | 'min' | 'max' | 'broken' | Exclude<TextCheck, 'custom'> | 'custom'; n?: number }
+  | { custom: string };
+
+export function fieldValueCheck(type: FieldType, o: FieldOptions, raw: string): FieldCheck | null {
   const v = raw.trim();
   if (v === '') return null; // empty clears; "required" is checked when signing
   switch (type) {
     case 'checkbox':
-      return v === 'true' ? null : 'Tick the box or leave it empty.';
+      return v === 'true' ? null : { key: 'checkbox' };
     case 'radio':
     case 'dropdown':
-      return (o.choices ?? []).includes(v) ? null : 'Choose one of the options.';
+      return (o.choices ?? []).includes(v) ? null : { key: 'choice' };
     case 'number': {
       const dec = o.decimals ?? 2;
-      if (!/^-?[0-9]+(\.[0-9]+)?$/.test(v)) return 'Enter a number, like 12 or 12.50';
+      if (!/^-?[0-9]+(\.[0-9]+)?$/.test(v)) return { key: 'number' };
       const places = v.includes('.') ? v.split('.')[1].length : 0;
-      if (places > dec) return dec === 0 ? 'Use a whole number.' : `Use at most ${dec} decimal place${dec === 1 ? '' : 's'}.`;
+      if (places > dec) return dec === 0 ? { key: 'whole' } : dec === 1 ? { key: 'decimalsOne' } : { key: 'decimals', n: dec };
       const n = Number(v);
-      if (o.min !== undefined && n < o.min) return `The smallest allowed is ${o.min}.`;
-      if (o.max !== undefined && n > o.max) return `The largest allowed is ${o.max}.`;
+      if (o.min !== undefined && n < o.min) return { key: 'min', n: o.min };
+      if (o.max !== undefined && n > o.max) return { key: 'max', n: o.max };
       return null;
     }
     case 'text':
@@ -175,13 +180,37 @@ export function checkFieldValue(type: FieldType, o: FieldOptions, raw: string): 
     case 'title': {
       if (!o.check) return null;
       const re = o.check === 'custom' ? safeRegExp(o.pattern) : CHECK_PATTERN[o.check];
-      if (!re) return 'This field is set up wrongly. Tell the sender.';
-      return re.test(v) ? null : o.message?.trim() || CHECK_MESSAGE[o.check];
+      if (!re) return { key: 'broken' };
+      if (re.test(v)) return null;
+      return o.message?.trim() ? { custom: o.message.trim() } : { key: o.check };
     }
     default:
       return null;
   }
 }
+
+const CHECK_EN: Record<Exclude<FieldCheck, { custom: string }>['key'], string> = {
+  checkbox: 'Tick the box or leave it empty.',
+  choice: 'Choose one of the options.',
+  number: 'Enter a number, like 12 or 12.50',
+  whole: 'Use a whole number.',
+  decimalsOne: 'Use at most 1 decimal place.',
+  decimals: 'Use at most {n} decimal places.',
+  min: 'The smallest allowed is {n}.',
+  max: 'The largest allowed is {n}.',
+  broken: 'This field is set up wrongly. Tell the sender.',
+  ...CHECK_MESSAGE,
+};
+
+/** Why a signer's value is not accepted, or null (in English). The database checks the same before storing it. */
+export function checkFieldValue(type: FieldType, o: FieldOptions, raw: string): string | null {
+  const c = fieldValueCheck(type, o, raw);
+  if (!c) return null;
+  return 'custom' in c ? c.custom : CHECK_EN[c.key].replace('{n}', String(c.n));
+}
+
+/** The English wording of each check code (the signing page's English catalog must say the same, tested). */
+export const FIELD_CHECK_EN = CHECK_EN;
 
 /** Field names: lower case, start with a letter (the formula language is case-insensitive and lower-cases names). */
 export const NAME_PATTERN = /^[a-z][a-z0-9_]{0,30}$/;

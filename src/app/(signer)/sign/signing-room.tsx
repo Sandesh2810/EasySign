@@ -4,7 +4,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Notice } from '@/components/ui';
-import { checkFieldValue, FIELD_LABEL, INFO_ONLY, TYPED_TYPES, type FieldOptions, type FieldType } from '@/lib/fields';
+import { fieldValueCheck, INFO_ONLY, TYPED_TYPES, type FieldOptions, type FieldType } from '@/lib/fields';
+import { useLocale, useT } from '@/i18n/client';
+import type { MessageKey } from '@/i18n/format';
 import { computeForm } from '@/lib/form-logic';
 import { AttachmentField } from './attachment-field';
 import { approveAction, completeAction, fillFieldAction } from './actions';
@@ -59,9 +61,12 @@ const isPicked = (t: FieldType) => t === 'checkbox' || t === 'radio' || t === 'd
 const safeUrl = (u?: string) => (u && /^https?:\/\//i.test(u) ? u : null);
 
 export function SigningRoom({ title, senderLine, signer, fields, adopted, intentText, mode, allowHandOff = false, questions = null }: Props) {
+  const t = useT();
+  const locale = useLocale();
+  const label = (type: FieldType) => t(`field.${type}` as MessageKey);
   const router = useRouter();
   const [pages, setPages] = useState<PageInfo[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [width, setWidth] = useState(0);
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(fields.map((f) => [f.id, f.value])));
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -116,7 +121,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
         }
         if (!cancelled) setPages(infos);
       } catch {
-        if (!cancelled) setLoadError('The document could not be displayed. Reload the page to try again.');
+        if (!cancelled) setLoadError(true);
       }
     })();
     return () => {
@@ -181,14 +186,15 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
     // untick must send both, or the stored value ends up differing from what the signer sees (found in slice 4).
     if ((f.id in sent.current ? sent.current[f.id] : saved.current[f.id]) === value) return;
     // checked here first so the signer sees the sender's own message at once; the server checks it again
-    const problem = checkFieldValue(f.type, f.options ?? {}, value);
-    if (problem) {
+    const check = fieldValueCheck(f.type, f.options ?? {}, value);
+    if (check) {
+      const problem = 'custom' in check ? check.custom : t(`check.${check.key}` as MessageKey, { n: check.n ?? '' });
       setInvalid((m) => ({ ...m, [f.id]: problem }));
-      setSaveError(`${FIELD_LABEL[f.type]}: ${problem}`);
+      setSaveError(t('room.fieldProblem', { label: label(f.type), problem }));
       return;
     }
     sent.current[f.id] = value;
-    const res = await fillFieldAction(f.id, value).catch(() => ({ ok: false as const, message: 'We could not reach the server. Your last entry is not saved yet.' }));
+    const res = await fillFieldAction(f.id, value).catch(() => ({ ok: false as const, message: t('room.saveOffline') }));
     // a failed save may be retried with the same value
     if (!res.ok && sent.current[f.id] === value) delete sent.current[f.id];
     if (res.ok) {
@@ -253,12 +259,12 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
     setFinishError(null);
     // make sure every typed value has reached the server before completing
     if (mode === 'sign') for (const f of fields) if (isTyped(f.type)) await saveValue(f);
-    const res = await (mode === 'approve' ? approveAction() : completeAction(localDate())).catch(() => ({ ok: false as const, message: 'We could not reach the server. Nothing was recorded. Try again.' }));
+    const res = await (mode === 'approve' ? approveAction() : completeAction(localDate())).catch(() => ({ ok: false as const, message: t('room.finishOffline') }));
     if (!res.ok) {
       setFinishing(false);
       setFinishError(res.message);
       // D-81: another member of the signing group signed first: show the "already completed" page
-      if (/signing group/.test(res.message)) router.refresh();
+      if ('code' in res && res.code === 'ES_GROUP_DONE') router.refresh();
       return;
     }
     router.refresh();
@@ -275,7 +281,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
             <h1 className="truncate text-lg font-medium text-ink">{title}</h1>
           </div>
           {mode === 'view' ? (
-            <p className="text-sm text-ink-body">For your information. Nothing is needed from you.</p>
+            <p className="text-sm text-ink-body">{t('room.view')}</p>
           ) : mode === 'approve' ? (
             <div className="flex flex-wrap items-center gap-2">
               <PaperCopyControl className="px-2" />
@@ -283,13 +289,13 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
               {allowHandOff ? <HandOffControl className="px-2" /> : null}
               <DeclineControl />
               <Button type="button" onClick={openConfirm}>
-                Approve
+                {t('room.approve')}
               </Button>
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-3">
               <p role="status" className="text-sm text-ink-body">
-                {doneCount} of {required.length} done
+                {t('room.progress', { done: doneCount, total: required.length })}
               </p>
               <PaperCopyControl className="px-2" />
               <WithdrawControl className="px-2" />
@@ -297,11 +303,11 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
               <DeclineControl variant="quiet" className="px-2" />
               {remaining.length > 0 ? (
                 <Button type="button" onClick={() => goNext()}>
-                  {doneCount === 0 ? 'Start' : 'Next'}
+                  {doneCount === 0 ? t('room.start') : t('room.next')}
                 </Button>
               ) : (
                 <Button type="button" onClick={openConfirm}>
-                  Finish
+                  {t('room.finish')}
                 </Button>
               )}
             </div>
@@ -315,17 +321,17 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
             <Notice tone="danger">{saveError}</Notice>
           </div>
         ) : null}
-        {loadError ? <Notice tone="danger">{loadError}</Notice> : null}
+        {loadError ? <Notice tone="danger">{t('room.loadError')}</Notice> : null}
         {questions ? <div className="mb-3">{questions}</div> : null}
         {/* The pages below are pictures. The same file, opened in a PDF app, can be read aloud by a screen reader (WCAG 1.1.1, slice 9). */}
         <p className="mb-3 px-2 text-sm text-ink-body">
           <a href="/api/sign/document" target="_blank" rel="noopener">
-            Open the document as a PDF
+            {t('room.openPdf')}
           </a>{' '}
-          to read it in your own PDF app or with a screen reader (opens in a new tab).
+          {t('room.openPdfTail')}
         </p>
         <div ref={wrap} className="flex flex-col items-center gap-4">
-          {pages.length === 0 && !loadError ? <p className="py-10 text-ink-muted">Loading the document…</p> : null}
+          {pages.length === 0 && !loadError ? <p className="py-10 text-ink-muted">{t('room.loading')}</p> : null}
           {pages.map((p, i) => (
             <div key={i} className="relative border border-control-border" style={{ width, height: (width * p.height) / p.width, backgroundColor: '#fff' }}>
               <canvas
@@ -334,7 +340,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                 }}
                 className="absolute inset-0 size-full"
                 role="img"
-                aria-label={`Page ${i + 1} of ${pages.length}`}
+                aria-label={t('room.pageOf', { n: i + 1, total: pages.length })}
               />
               {shown
                 .filter((f) => f.page === i + 1)
@@ -352,26 +358,30 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         ref={(el) => {
                           targets.current[f.id] = el;
                         }}
+                        data-field-kind={kind}
                         onClick={() => setDialogKind(kind)}
                         style={{ ...box, color: '#141414', backgroundColor: src ? 'transparent' : '#fff3bf', fontSize }}
                         className="absolute flex items-center justify-center overflow-hidden rounded-sm border-2 border-dashed border-[#141414] font-medium focus-visible:outline-4"
                         // The spoken name starts with the visible words ("Sign here" / "Initial"), so voice control finds it (WCAG 2.5.3).
-                        aria-label={src ? `Your ${FIELD_LABEL[kind].toLowerCase()} is in place. Change it` : kind === 'signature' ? 'Sign here (signature needed)' : 'Initial here (initials needed)'}
+                        aria-label={src ? (kind === 'signature' ? t('room.signatureInPlace') : t('room.initialsInPlace')) : kind === 'signature' ? t('room.signHereAria') : t('room.initialHereAria')}
                       >
                         {src ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={src} alt="" className="max-h-full max-w-full object-contain" />
                         ) : kind === 'signature' ? (
-                          'Sign here'
+                          t('room.signHere')
                         ) : (
-                          'Initial'
+                          t('room.initial')
                         )}
                       </button>
                     );
                   }
                   // D-80: a value the sender filled in and locked is shown, announced as such, and cannot be changed (the database refuses it too)
                   const ro = f.options?.readonly === true;
-                  const need = (f.required ? ' (required)' : ' (optional)') + (ro ? ', filled in by the sender, cannot be changed' : '');
+                  const need = (name: string) => {
+                    const base = t(f.required ? 'room.required' : 'room.optional', { label: name });
+                    return ro ? t('room.lockedField', { label: base }) : base;
+                  };
                   const filled = (values[f.id] ?? '').trim() !== '';
                   if (f.type === 'checkbox') {
                     return (
@@ -381,7 +391,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         ref={(el) => {
                           targets.current[f.id] = el;
                         }}
-                        aria-label={`Checkbox${need}`}
+                        aria-label={need(label('checkbox'))}
                         checked={values[f.id] === 'true'}
                         disabled={ro}
                         onChange={(e) => pick(f, e.target.checked ? 'true' : '')}
@@ -394,7 +404,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                     const choices = f.options?.choices ?? [];
                     return (
                       <fieldset key={f.id} style={{ ...box, color: '#141414', fontSize: Math.min(fontSize, 13), backgroundColor: filled ? '#ffffff' : '#fff3bf' }} className="absolute m-0 flex flex-col justify-center gap-0.5 overflow-auto rounded-sm border-2 border-[#141414] px-1">
-                        <legend className="sr-only">Choose one{need}</legend>
+                        <legend className="sr-only">{need(label('radio'))}</legend>
                         {choices.map((c, i) => (
                           <label key={c} className="flex min-h-6 items-center gap-1.5 leading-tight">
                             <input
@@ -422,14 +432,14 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         ref={(el) => {
                           targets.current[f.id] = el;
                         }}
-                        aria-label={`Dropdown${need}`}
+                        aria-label={need(label('dropdown'))}
                         value={values[f.id] ?? ''}
                         disabled={ro}
                         onChange={(e) => pick(f, e.target.value)}
                         style={{ ...box, color: '#141414', fontSize, backgroundColor: filled ? '#ffffff' : '#fff3bf' }}
                         className="absolute rounded-sm border-2 border-[#141414] px-1 focus-visible:outline-4"
                       >
-                        <option value="">Choose…</option>
+                        <option value="">{t('room.choose')}</option>
                         {(f.options?.choices ?? []).map((c) => (
                           <option key={c} value={c}>
                             {c}
@@ -453,9 +463,9 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         key={f.id}
                         style={{ ...box, color: '#141414', fontSize }}
                         className="absolute flex items-center justify-end overflow-hidden whitespace-nowrap rounded-sm border border-[#5a5a5a] bg-[#f3f3f3] px-1 tabular-nums"
-                        title={c && !c.ok ? `Cannot be worked out yet: ${c.error}` : 'Calculated for you from your entries'}
+                        title={c && !c.ok ? t('room.calcError', { error: c.error }) : t('room.calcTitle')}
                       >
-                        <span className="sr-only">Calculated{f.options?.name ? ` ${f.options.name.replace(/_/g, ' ')}` : ''}: </span>
+                        <span className="sr-only">{label('formula')}{f.options?.name ? ` ${f.options.name.replace(/_/g, ' ')}` : ''}: </span>
                         {c?.ok ? c.value : '—'}
                       </div>
                     );
@@ -465,7 +475,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                     return url ? (
                       <a key={f.id} href={url} target="_blank" rel="noopener noreferrer" style={{ ...box, fontSize }} className="absolute flex items-center overflow-hidden whitespace-nowrap rounded-sm px-1 text-[#1d4ed8] underline">
                         {f.options?.label || url}
-                        <span className="sr-only"> (opens in a new tab)</span>
+                        <span className="sr-only"> {t('room.newTab')}</span>
                       </a>
                     ) : null;
                   }
@@ -496,10 +506,10 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         ref={(el) => {
                           targets.current[f.id] = el;
                         }}
-                        aria-label={`${FIELD_LABEL[f.type]}${need}`}
+                        aria-label={need(label(f.type))}
                         aria-invalid={invalid[f.id] ? true : undefined}
                         inputMode={f.type === 'number' ? 'decimal' : undefined}
-                        placeholder={FIELD_LABEL[f.type]}
+                        placeholder={label(f.type)}
                         value={values[f.id] ?? ''}
                         maxLength={500}
                         readOnly={ro}
@@ -512,7 +522,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         onClick={() => {
                           if (!ro && window.innerWidth < 640) setEditing(f.id);
                         }}
-                        title={ro ? 'Filled in by the sender' : undefined}
+                        title={ro ? t('room.filledBySender') : undefined}
                         style={{ ...box, color: '#141414', backgroundColor: ro ? '#f3f3f3' : (values[f.id] ?? '').trim() ? '#ffffff' : '#fff3bf', fontSize }}
                         className="absolute rounded-sm border-2 border-[#141414] px-1 placeholder:text-[#5a5a5a] focus-visible:outline-4"
                       />
@@ -523,7 +533,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                       key={f.id}
                       style={{ ...box, color: '#141414', fontSize }}
                       className="absolute flex items-center overflow-hidden whitespace-nowrap rounded-sm border border-dashed border-[#5a5a5a] px-1"
-                      title={`${FIELD_LABEL[f.type]} (filled in for you)`}
+                      title={t('room.autoFilled', { label: label(f.type) })}
                     >
                       <span suppressHydrationWarning>{autoValue(f)}</span>
                     </div>
@@ -541,8 +551,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
             return (
               <div className="fixed inset-x-0 bottom-0 z-30 border-t border-hairline bg-surface px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-soft" role="group" aria-labelledby="phone-entry-label">
                 <label id="phone-entry-label" htmlFor="phone-entry" className="text-sm font-medium text-ink">
-                  {FIELD_LABEL[f.type]}
-                  {f.required ? ' (required)' : ' (optional)'}
+                  {t(f.required ? 'room.required' : 'room.optional', { label: label(f.type) })}
                 </label>
                 <input
                   id="phone-entry"
@@ -560,10 +569,10 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                 />
                 <div className="mt-2 flex justify-end gap-2">
                   <Button type="button" variant="outline" onClick={() => void done(false)}>
-                    Done
+                    {t('room.done')}
                   </Button>
                   <Button type="button" onClick={() => void done(true)}>
-                    Next
+                    {t('room.next')}
                   </Button>
                 </div>
               </div>
@@ -596,19 +605,23 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
         >
           <div className="flex flex-col gap-4 p-5 sm:p-6">
             <h2 id="finish-title" className="text-xl font-medium text-ink">
-              {mode === 'approve' ? 'Approve this document' : 'Sign this document'}
+              {mode === 'approve' ? t('room.approveTitle') : t('room.signTitle')}
             </h2>
-            <p className="text-base text-ink-body">{intentText}</p>
+            {/* D-95: the statement stays in reviewed English in every language, and says so */}
+            <p lang="en" dir="ltr" className="text-base text-ink-body">
+              {intentText}
+            </p>
+            {locale !== 'en' ? <p className="text-sm text-ink-muted">{t('common.legalAboveInEnglish')}</p> : null}
             <p className="text-sm text-ink-muted">
-              {mode === 'approve' ? 'Approving' : 'Signing'} as {signer.name} ({signer.email}). {mode === 'approve' ? 'After this step your approval cannot be withdrawn here.' : 'After this step the document cannot be changed.'}
+              {t(mode === 'approve' ? 'room.asApprover' : 'room.asSigner', { name: signer.name, email: signer.email })}
             </p>
             {finishError ? <Notice tone="danger">{finishError}</Notice> : null}
             <div className="flex flex-wrap justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => confirmDialog.current?.close()} disabled={finishing}>
-                Go back
+                {t('common.goBack')}
               </Button>
               <Button type="button" onClick={() => void finish()} disabled={finishing}>
-                {finishing ? 'One moment…' : mode === 'approve' ? 'Approve' : 'Adopt and Sign'}
+                {finishing ? t('common.oneMoment') : mode === 'approve' ? t('room.approve') : t('room.adopt')}
               </Button>
             </div>
           </div>

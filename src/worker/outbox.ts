@@ -11,6 +11,10 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
 import { brandEmail, commentReplyTemplate, completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, otpTemplate, senderTaskTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
 import { drainOutbox, type OutboxDeps, type OutboxRow, type Prepared } from './dispatch';
+import { isLocale, type Locale } from '@/i18n/config';
+
+/** D-95: the language a person chose on their signing page (stored with them), or English. */
+const localeOf = (r: { locale?: unknown } | null | undefined): Locale => (isLocale(r?.locale) ? r.locale : 'en');
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
 
@@ -62,7 +66,7 @@ async function prepareOtp(row: OutboxRow): Promise<Prepared> {
   const db = supabaseAdmin();
   if (!row.recipient_id || !row.envelope_id) throw new Error('code request without a person');
   const [{ data: recipient }, { data: envelope }] = await Promise.all([
-    db.from('recipients').select('name, email').eq('id', row.recipient_id).maybeSingle(),
+    db.from('recipients').select('name, email, locale').eq('id', row.recipient_id).maybeSingle(),
     db.from('envelopes').select('title').eq('id', row.envelope_id).maybeSingle(),
   ]);
   if (!recipient || !envelope) throw new Error('recipient not found');
@@ -73,7 +77,7 @@ async function prepareOtp(row: OutboxRow): Promise<Prepared> {
   const stored = await db.rpc('signer_store_otp', { p_outbox_id: row.id, p_otp_hash: `\\x${hash.toString('hex')}` });
   if (stored.error) throw new Error(`code could not be stored: ${stored.error.message}`);
   if (stored.data !== true) throw new Error('code request is no longer current');
-  return { to: recipient.email as string, email: otpTemplate({ name: recipient.name as string, title: envelope.title as string, code, minutes: 10 }) };
+  return { to: recipient.email as string, locale: localeOf(recipient), email: otpTemplate({ name: recipient.name as string, title: envelope.title as string, code, minutes: 10, locale: localeOf(recipient) }) };
 }
 
 /** Builds the email for one outbox row (also used by `npm run outbox:preview`, which sends nothing). */
@@ -83,7 +87,7 @@ export async function prepare(row: OutboxRow): Promise<Prepared> {
   if (!row.envelope_id) return prepared;
   const { data: env2 } = await supabaseAdmin().from('envelopes').select('org_id').eq('id', row.envelope_id).maybeSingle();
   const brand = env2 ? await loadBrand(env2.org_id as string) : null;
-  return brand ? { ...prepared, email: brandEmail(prepared.email, { name: brand.name, color: brand.color, textColor: brand.textColor, footer: brand.footer }) } : prepared;
+  return brand ? { ...prepared, email: brandEmail(prepared.email, { name: brand.name, color: brand.color, textColor: brand.textColor, footer: brand.footer }, prepared.locale) } : prepared;
 }
 
 async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
@@ -101,11 +105,11 @@ async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
   if (row.kind === 'voided_notice') {
     if (envelope.status !== 'voided') throw new Error('envelope is not voided');
     const [{ data: recipient }, sender] = await Promise.all([
-      db.from('recipients').select('name, email').eq('id', row.recipient_id!).maybeSingle(),
+      db.from('recipients').select('name, email, locale').eq('id', row.recipient_id!).maybeSingle(),
       userEmail(envelope.sender_id as string),
     ]);
     if (!recipient) throw new Error('recipient not found');
-    return { to: recipient.email as string, email: voidedTemplate({ name: recipient.name as string, senderName: sender.name, title: envelope.title as string }) };
+    return { to: recipient.email as string, locale: localeOf(recipient), email: voidedTemplate({ name: recipient.name as string, senderName: sender.name, title: envelope.title as string, locale: localeOf(recipient) }) };
   }
 
   if (row.kind === 'expired_sender') {
@@ -159,7 +163,7 @@ async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
     if (!['sent', 'in_progress'].includes(envelope.status as string)) throw new Error('envelope is no longer open');
     const commentId = typeof row.payload?.comment_id === 'string' ? row.payload.comment_id : '';
     const [{ data: recipient }, { data: token }, { data: comment }, sender] = await Promise.all([
-      db.from('recipients').select('name, email, role').eq('id', row.recipient_id).maybeSingle(),
+      db.from('recipients').select('name, email, role, locale').eq('id', row.recipient_id).maybeSingle(),
       db.from('recipient_tokens').select('id, nonce, expires_at').eq('recipient_id', row.recipient_id).is('revoked_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       db.from('envelope_comments').select('body').eq('id', commentId).eq('recipient_id', row.recipient_id).eq('author_kind', 'sender').maybeSingle(),
       userEmail(envelope.sender_id as string),
@@ -170,7 +174,9 @@ async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
     return {
       to: recipient.email as string,
       replyTo: sender.email,
+      locale: localeOf(recipient),
       email: commentReplyTemplate({
+        locale: localeOf(recipient),
         name: recipient.name as string,
         senderName: sender.name,
         title: envelope.title as string,
@@ -185,7 +191,7 @@ async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
     if (!row.recipient_id) throw new Error('request without a recipient');
     if (!['sent', 'in_progress'].includes(envelope.status as string)) throw new Error('envelope is no longer open');
     const [{ data: recipient }, { data: token }, sender] = await Promise.all([
-      db.from('recipients').select('name, email, role').eq('id', row.recipient_id).maybeSingle(),
+      db.from('recipients').select('name, email, role, locale').eq('id', row.recipient_id).maybeSingle(),
       db.from('recipient_tokens').select('id, nonce, expires_at').eq('recipient_id', row.recipient_id).is('revoked_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       userEmail(envelope.sender_id as string),
     ]);
@@ -196,7 +202,9 @@ async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
       to: recipient.email as string,
       // the sender's account address, which they confirmed when they signed up
       replyTo: sender.email,
+      locale: localeOf(recipient),
       email: signatureRequestTemplate({
+        locale: localeOf(recipient),
         signerName: recipient.name as string,
         senderName: sender.name,
         title: envelope.title as string,
@@ -211,19 +219,21 @@ async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
 
   if (row.kind === 'completion_copy' || row.kind === 'completion_sender') {
     if (envelope.status !== 'completed' || !envelope.sealed_storage_path || !envelope.certificate_storage_path) throw new Error('envelope is not completed');
-    let to: { email: string; name: string };
+    let to: { email: string; name: string; locale?: Locale };
     if (row.kind === 'completion_sender') to = await userEmail((row.to_user_id ?? envelope.sender_id) as string);
     else {
-      const { data: recipient } = await db.from('recipients').select('name, email').eq('id', row.recipient_id!).maybeSingle();
+      const { data: recipient } = await db.from('recipients').select('name, email, locale').eq('id', row.recipient_id!).maybeSingle();
       if (!recipient) throw new Error('recipient not found');
-      to = { email: recipient.email as string, name: recipient.name as string };
+      to = { email: recipient.email as string, name: recipient.name as string, locale: localeOf(recipient) };
     }
     const storage = getStorageFor(envelope.sealed_storage_backend as Backend);
     const [sealed, certificate] = await Promise.all([storage.get('sealed', envelope.sealed_storage_path as string), storage.get('sealed', envelope.certificate_storage_path as string)]);
     const base = safeName(envelope.title as string);
     return {
       to: to.email,
+      locale: to.locale,
       email: completionTemplate({
+        locale: to.locale,
         name: to.name,
         title: envelope.title as string,
         code: envelope.public_code as string,

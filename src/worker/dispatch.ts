@@ -1,6 +1,7 @@
 // The email dispatch loop, with everything it needs from outside passed in. No database, storage or
 // provider is imported here, so the loop and the Email Budget Manager can be tested together under load
 // (AT2.6) with an in-memory stand-in. src/worker/outbox.ts wires it to the real database and provider.
+import type { Locale } from '@/i18n/config';
 import { decide, nextUtcMidnight, type EmailClass } from '@/lib/email-budget';
 import type { BudgetSnapshot } from '@/lib/email-budget-state';
 import type { RenderedEmail } from '@/mail/templates';
@@ -21,6 +22,8 @@ export interface OutboxRow {
 export interface Prepared {
   to: string;
   email: RenderedEmail;
+  /** D-95: the language of an email to a signer (their own choice on the signing page); English otherwise */
+  locale?: Locale;
   /** where a reply goes: only ever an address that is confirmed (a signed-in account's email) */
   replyTo?: string;
   attachments?: MailAttachment[];

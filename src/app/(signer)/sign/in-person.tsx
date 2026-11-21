@@ -8,12 +8,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Notice } from '@/components/ui';
+import { useT } from '@/i18n/client';
 import { HEARTBEAT_SECONDS, IDLE_LOCK_SECONDS, IDLE_WARNING_SECONDS } from '@/lib/in-person';
 import { handBackAction, inPersonHeartbeatAction, lockInPersonAction, unlockInPersonAction } from './in-person-actions';
 
 const ACTIVITY = ['pointerdown', 'keydown', 'touchstart', 'wheel'] as const;
 
 export function InPersonGuard({ hostName, signerName, children }: { hostName: string; signerName: string; children: React.ReactNode }) {
+  const t = useT();
   const router = useRouter();
   // both set when the screen appears (in the effect below), not during render
   const lastActive = useRef(0);
@@ -71,10 +73,10 @@ export function InPersonGuard({ hostName, signerName, children }: { hostName: st
       <div className="border-b border-hairline bg-surface-sand">
         <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <p className="text-sm text-ink">
-            <strong className="font-medium">Signing in person</strong> with {hostName}. This screen is for {signerName}.
+            <strong className="font-medium">{t('ip.bannerStrong')}</strong> {t('ip.bannerRest', { host: hostName, signer: signerName })}
           </p>
           <Button type="button" variant="outline" onClick={() => void lock('manual')}>
-            Lock the screen
+            {t('ip.lock')}
           </Button>
         </div>
       </div>
@@ -83,14 +85,14 @@ export function InPersonGuard({ hostName, signerName, children }: { hostName: st
           <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
             <div>
               <p id="idle-title" className="text-base font-medium text-ink">
-                Still there?
+                {t('ip.still')}
               </p>
               <p id="idle-body" className="text-sm text-ink-body" aria-live="polite">
-                For privacy the screen locks in {secondsLeft} seconds. Touch the screen or press any key to keep going.
+                {t('ip.idle', { n: secondsLeft })}
               </p>
             </div>
             <Button type="button" onClick={() => setWarn(false)}>
-              Keep going
+              {t('ip.keep')}
             </Button>
           </div>
         </div>
@@ -101,6 +103,7 @@ export function InPersonGuard({ hostName, signerName, children }: { hostName: st
 }
 
 export function HostPinForm({ mode, hostName }: { mode: 'unlock' | 'handback'; hostName: string }) {
+  const t = useT();
   const router = useRouter();
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
@@ -112,7 +115,7 @@ export function HostPinForm({ mode, hostName }: { mode: 'unlock' | 'handback'; h
     const res = await (mode === 'unlock' ? unlockInPersonAction(pin) : handBackAction(pin)).catch((e: unknown) => {
       // a redirect from the server (hand-back done, or signed out after too many wrong PINs) is not an error
       if (e && typeof e === 'object' && 'digest' in e && String((e as { digest: unknown }).digest).startsWith('NEXT_REDIRECT')) throw e;
-      return { ok: false as const, message: 'We could not reach the server. Try again.' };
+      return { ok: false as const, message: t('common.offlineTryAgain') };
     });
     setBusy(false);
     setPin('');
@@ -131,7 +134,7 @@ export function HostPinForm({ mode, hostName }: { mode: 'unlock' | 'handback'; h
       }}
     >
       <label htmlFor="host-pin" className="text-sm font-medium text-ink">
-        {hostName}&apos;s PIN
+        {t('ip.pin', { host: hostName })}
       </label>
       <input
         id="host-pin"
@@ -147,7 +150,7 @@ export function HostPinForm({ mode, hostName }: { mode: 'unlock' | 'handback'; h
       {error ? <Notice tone="danger">{error}</Notice> : null}
       <div>
         <Button type="submit" disabled={busy || pin.length < 4}>
-          {busy ? 'Checking…' : mode === 'unlock' ? 'Unlock' : 'Take the device back'}
+          {busy ? t('common.checking') : mode === 'unlock' ? t('ip.unlock') : t('ip.takeBack')}
         </Button>
       </div>
     </form>
