@@ -26,6 +26,8 @@ async function Templates() {
   if (!canSend(ws.role)) return <p className="text-base text-ink-body">Viewers do not use templates. Ask the owner if you need to send documents.</p>;
   const { data, error } = await supabaseAdmin().rpc('template_list', { p_actor: user.id, p_org: ws.orgId });
   const list = (data ?? []) as Row[];
+  const { data: batchData } = await supabaseAdmin().rpc('bulk_batch_list', { p_actor: user.id });
+  const batches = (batchData ?? []) as { id: string; title: string; status: string; created_at: string; rows: number; sent: number }[];
   return (
     <>
       <p className="text-base text-ink-body">
@@ -63,6 +65,26 @@ async function Templates() {
           </ul>
         )}
       </section>
+      {batches.length ? (
+        // D-85: recent bulk sends (yours; all of them for owners and administrators)
+        <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="bulk-heading">
+          <h2 id="bulk-heading" className="mb-4 text-base font-medium text-ink">
+            Bulk sends
+          </h2>
+          <ul className="divide-y divide-hairline">
+            {batches.map((b) => (
+              <li key={b.id} className="py-3">
+                <Link href={`/app/bulk/${b.id}`} className="text-base [overflow-wrap:anywhere]">
+                  {b.title}
+                </Link>
+                <p className="text-sm text-ink-muted">
+                  {b.created_at.slice(0, 10)} · {b.sent} of {b.rows} sent · {b.status === 'active' ? 'in progress' : b.status === 'done' ? 'finished' : 'cancelled'}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </>
   );
 }

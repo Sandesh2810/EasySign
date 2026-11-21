@@ -18,6 +18,7 @@ describe('in-app notices', () => {
       'recipient_delegated',
       'comment_added',
       'scheduled_send_failed',
+      'bulk_done',
       'envelope_completed',
       'envelope_declined',
       'envelope_expired',

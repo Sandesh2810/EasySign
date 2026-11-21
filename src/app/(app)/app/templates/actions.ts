@@ -12,6 +12,7 @@ import { friendlyDbError } from '@/lib/request-guard';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { getStorageFor } from '@/storage';
+import { draftFromTemplate } from '@/lib/template-use';
 import type { Backend } from '@/storage/types';
 
 export type TemplateResult = { ok: true; message: string } | { ok: false; message: string } | null;
@@ -76,26 +77,14 @@ export async function useTemplateAction(_prev: TemplateResult, formData: FormDat
     if (m && typeof value === 'string') people.push({ role_id: m[1], name: value.trim(), email: String(formData.get(`email_${m[1]}`) ?? '').trim() });
   }
   const title = String(formData.get('title') ?? '').trim().slice(0, 200);
-  const admin = supabaseAdmin();
-  const started = await admin.rpc('template_start', { p_actor: user.id, p_template_id: templateId.data, p_title: title, p_people: people });
-  if (started.error || !started.data) return { ok: false, message: friendlyDbError(started.error?.message).message };
-  const s = started.data as { envelope_id: string; org_id: string; source_backend: Backend; source_path: string };
-  const target = `${s.org_id}/${s.envelope_id}/document.pdf`;
-  const store = getStorageFor(s.source_backend);
-  let copied = false;
+  let envelopeId: string;
   try {
-    await store.put('originals', target, await store.get('originals', s.source_path), { contentType: 'application/pdf' });
-    copied = true;
-    const finished = await admin.rpc('template_finish', { p_actor: user.id, p_envelope_id: s.envelope_id, p_template_id: templateId.data, p_storage_path: target });
-    if (finished.error) throw new Error(friendlyDbError(finished.error.message).message);
+    envelopeId = await draftFromTemplate(user.id, templateId.data, title, people);
   } catch (e) {
-    // undo the half-made draft so nothing is left behind
-    if (copied) await store.remove('originals', target, { draftOnly: true }).catch(() => {});
-    await admin.rpc('delete_draft_envelope', { p_actor: user.id, p_envelope_id: s.envelope_id });
     return { ok: false, message: e instanceof Error && e.message ? e.message : SORRY };
   }
   revalidatePath('/app');
-  redirect(`/app/envelopes/${s.envelope_id}`);
+  redirect(`/app/envelopes/${envelopeId}`);
 }
 
 export async function updateTemplateAction(_prev: TemplateResult, formData: FormData): Promise<TemplateResult> {

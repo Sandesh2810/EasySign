@@ -29,9 +29,4 @@ export async function requireApiUser(request: NextRequest, opts: { mutation: boo
   return { user };
 }
 
-/** Database functions raise messages that start with a code such as "ES_QUOTA: ...". */
-export function friendlyDbError(message: string | undefined): { code: string; message: string } {
-  const m = /^(ES_[A-Z_]+):\s*(.*)$/.exec(message ?? '');
-  if (m) return { code: m[1], message: m[2].charAt(0).toUpperCase() + m[2].slice(1) + '.' };
-  return { code: 'ES_ERROR', message: 'Something went wrong. Nothing was changed. Try again.' };
-}
+export { friendlyDbError } from '@/lib/db-error';

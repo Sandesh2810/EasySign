@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { runOutbox } from './outbox';
 import { runOneSealJob } from './seal-job';
 import { archiveDue, ARCHIVE_AFTER_DAYS } from './audit-archive';
+import { runBulk } from './bulk';
 
 const once = process.argv.includes('--once');
 // --archive-now [days] [document id]: archive the audit trails of documents finished at least [days] ago
@@ -61,6 +62,8 @@ async function tick(): Promise<boolean> {
   const seal = await runOneSealJob(log);
   if (seal !== 'none') busy = true;
   if ((await runOutbox(log)) > 0) busy = true;
+  // D-85: a few bulk-send rows per pass (paced by the email allowance)
+  if ((await runBulk(log)) > 0) busy = true;
   return busy;
 }
 

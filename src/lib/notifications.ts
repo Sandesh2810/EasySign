@@ -41,6 +41,17 @@ export function describeNotification(kind: string, payload: unknown): NoticeView
       return { text: `${by} signed ${title}.`, path, tone: 'good' };
     case 'recipient_approved':
       return { text: `${by} approved ${title}.`, path, tone: 'good' };
+    case 'bulk_done': {
+      // D-85: a bulk send has finished; its page lists every row
+      const sent = Number(p.sent ?? 0);
+      const notSent = Number(p.failed ?? 0);
+      const batch = str(p.batch_id, 40);
+      return {
+        text: `Bulk send ${title} has finished: ${sent} sent${notSent ? `, ${notSent} not sent (see the report for why)` : ''}.`,
+        path: UUID.test(batch) ? `/app/bulk/${batch}` : null,
+        tone: notSent ? 'attention' : 'good',
+      };
+    }
     case 'comment_added':
       // D-84: a question in the document's conversation
       return { text: `${by} asked a question about ${title}. Open the document to answer.`, path, tone: 'attention' };

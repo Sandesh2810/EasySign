@@ -57,6 +57,12 @@ async function TemplateView({ params }: { params: Promise<{ id: string }> }) {
         </h2>
         <p className="mb-4 text-sm text-ink-muted">Name a person for each role. You get a draft to check and send; locked fields stay where they are.</p>
         <UseTemplateForm templateId={t.id} name={t.name} roles={t.roles.map((r) => ({ id: r.id, label: r.label }))} />
+        {t.roles.length === 1 ? (
+          // D-85: one document per row of a CSV file
+          <p className="mt-4 text-sm text-ink-body">
+            Sending this to many people? <Link href={`/app/templates/${t.id}/bulk`}>Bulk send from a CSV file</Link>.
+          </p>
+        ) : null}
       </section>
 
       {t.access === 'edit' ? (

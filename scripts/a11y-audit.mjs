@@ -11,6 +11,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
@@ -123,8 +124,9 @@ async function prepare() {
   const draft = await makeEnvelope('Accessibility check (draft)', [SIGNER, { name: 'Bo Second', email: 'a11y-second@example.test' }]);
   // a template to look at (Phase 4 slice 2); earlier runs' templates are removed first so the 100-per-workspace cap is never reached
   const TEMPLATE_NAME = 'Accessibility check template';
+  const BULK_TEMPLATE_NAME = 'Accessibility check bulk template';
   const old = await db.rpc('template_list', { p_actor: sender.id, p_org: orgId });
-  for (const t of (old.data ?? []).filter((t) => t.name === TEMPLATE_NAME)) {
+  for (const t of (old.data ?? []).filter((t) => t.name === TEMPLATE_NAME || t.name === BULK_TEMPLATE_NAME)) {
     const { data: oldPath } = await db.rpc('template_delete', { p_actor: sender.id, p_template_id: t.id });
     if (typeof oldPath === 'string') await db.storage.from('originals').remove([oldPath]);
   }
@@ -133,6 +135,20 @@ async function prepare() {
   const copied = await db.storage.from('originals').copy(draft.storagePath, templatePath);
   if (copied.error) throw new Error(`template file copy: ${copied.error.message}`);
   await rpc(db, 'template_create', { p_actor: sender.id, p_template_id: templateId, p_envelope_id: draft.id, p_name: TEMPLATE_NAME, p_shared: true, p_labels: [], p_storage_path: templatePath });
+  // Phase 4 slice 9 (D-85): a one-person template for the bulk pages, and a finished batch whose rows all have a problem
+  // (so the worker never sends anything for it) to audit the batch page with its table of reasons
+  const bulkSource = await makeEnvelope('Accessibility check (bulk source)', [SIGNER], false, true);
+  const bulkTemplateId = randomUUID();
+  const bulkTemplatePath = `${orgId}/tpl-${bulkTemplateId}/document.pdf`;
+  const bulkCopied = await db.storage.from('originals').copy(bulkSource.storagePath, bulkTemplatePath);
+  if (bulkCopied.error) throw new Error(`bulk template file copy: ${bulkCopied.error.message}`);
+  await rpc(db, 'template_create', { p_actor: sender.id, p_template_id: bulkTemplateId, p_envelope_id: bulkSource.id, p_name: BULK_TEMPLATE_NAME, p_shared: true,
+    p_labels: [{ recipient_id: bulkSource.recipients[0].id, label: 'Customer' }], p_storage_path: bulkTemplatePath });
+  const batchId = await rpc(db, 'create_bulk_batch', { p_actor: sender.id, p_template_id: bulkTemplateId, p_delivery: 'link', p_expires_days: 30, p_rows: [
+    { row_no: 1, name: 'Ada Example', email: 'not-an-email' },
+    { row_no: 2, name: '', email: 'a11y-bulk2@example.test' },
+    { row_no: 3, name: 'Cy Example', email: 'a11y-bulk3@example.test', values: { qty_0: 'many' } },
+  ] });
   const sendWithLink = async (env) => {
     const tokenId = randomUUID();
     const nonce = newNonce();
@@ -156,7 +172,7 @@ async function prepare() {
   if (qa.error) throw new Error(`questions: ${qa.error.message}`);
   const keyboardOnly = await makeEnvelope('Accessibility check (keyboard only)', [{ name: 'Kim Keys', email: 'a11y-keys@example.test' }], true);
   const keyboardToken = await sendWithLink(keyboardOnly);
-  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId };
+  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId };
 }
 
 /** Press Tab until the focused element's name matches, then press the key. Fails if it is never reached. */
@@ -426,12 +442,25 @@ async function main() {
       ['Sender: team', '/app/team'],
       ['Sender: templates', '/app/templates'],
       ['Sender: a template (use and edit)', `/app/templates/${data.templateId}`],
+      ['Sender: bulk send (choose a file)', `/app/templates/${data.bulkTemplateId}/bulk`],
+      ['Sender: a bulk batch (rows and reasons)', `/app/bulk/${data.batchId}`],
     ];
     for (const [label, p] of senderPages) {
       await page.goto(`${APP}${p}`, { waitUntil: 'networkidle0' });
       await settle(page, 1200);
       await axeCheck(page, label);
       await reflowCheck(page, label);
+      if (p === `/app/templates/${data.bulkTemplateId}/bulk`) {
+        // the preview after choosing a file: counts, rows with a problem, the first rows, delivery and expiry choices
+        const csvPath = path.join(tmpdir(), `a11y-bulk-${randomUUID()}.csv`);
+        writeFileSync(csvPath, 'name,email,qty_0\r\nAda Example,a11y-ada@example.test,3\r\nBo Example,not-an-email,4\r\n');
+        await (await page.$('#bulk-file')).uploadFile(csvPath);
+        await page.waitForFunction(() => /ready, \d+ with a problem/.test(document.body.innerText), { timeout: 15000 });
+        await click(page, 'input[name="bulk-delivery"]:not(:checked)');
+        await settle(page, 600);
+        await axeCheck(page, 'Sender: bulk send (preview of a file, by email)');
+        await reflowCheck(page, 'Sender: bulk send (preview of a file, by email)');
+      }
       if (p === `/app/envelopes/${data.draftId}`) {
         await keyboardWalk(page, label, 80);
         // A placed field, selected with one click; then the click-only Move / Wider buttons (WCAG 2.5.7) must change it.
