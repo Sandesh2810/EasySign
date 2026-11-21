@@ -1,5 +1,5 @@
 // easysign-worker: a second small Node process beside the web app. It has no listening port.
-// Jobs: seal fully signed envelopes (one at a time) and dispatch queued email through the budget gate.
+// Jobs: seal fully signed envelopes (one at a time), dispatch queued email through the budget gate, and deliver webhooks.
 //   npm run worker        -> runs until stopped (Ctrl+C)
 //   npm run worker:once   -> drains what is waiting, then exits (used by tests and verify scripts)
 import { NOTIFY_MODE } from '@/config/brand';
@@ -8,6 +8,7 @@ import { runOutbox } from './outbox';
 import { runOneSealJob } from './seal-job';
 import { archiveDue, ARCHIVE_AFTER_DAYS } from './audit-archive';
 import { runBulk } from './bulk';
+import { pruneWebhooks, runWebhooks } from './webhooks';
 
 const once = process.argv.includes('--once');
 // --archive-now [days] [document id]: archive the audit trails of documents finished at least [days] ago
@@ -58,12 +59,15 @@ async function tick(): Promise<boolean> {
   if (Date.now() - lastArchive >= ARCHIVE_EVERY_MS) {
     lastArchive = Date.now();
     await archiveDue(log, ARCHIVE_AFTER_DAYS, 5);
+    await pruneWebhooks(log);
   }
   const seal = await runOneSealJob(log);
   if (seal !== 'none') busy = true;
   if ((await runOutbox(log)) > 0) busy = true;
   // D-85: a few bulk-send rows per pass (paced by the email allowance)
   if ((await runBulk(log)) > 0) busy = true;
+  // D-92: signed webhook deliveries (retries are scheduled by the database)
+  if ((await runWebhooks(log)) > 0) busy = true;
   return busy;
 }
 

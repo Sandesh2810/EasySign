@@ -85,3 +85,40 @@ export const sendBody = z
       .meta({ description: 'Only with delivery "link". Each link works like a key: share it only with that person.' }),
   })
   .meta({ id: 'SendResult' });
+
+// ---------- webhook payloads (D-92): what YouNMeSign posts to a webhook endpoint ----------
+/** Same list as WEBHOOK_EVENTS in src/lib/webhooks/events.ts (a unit test checks they agree). */
+export const DOCUMENT_EVENTS = ['document.sent', 'document.completed', 'document.declined', 'document.voided', 'document.expired'] as const;
+
+const webhookDocument = z
+  .strictObject({
+    id: uuid,
+    title: z.string(),
+    status: documentBody.shape.status,
+    verification_code: z.string().nullable(),
+    sent_at: when.nullable(),
+    completed_at: when.nullable(),
+    sealed: z.boolean().meta({ description: 'True once the signed PDF can be downloaded (GET /documents/{id}/download).' }),
+  })
+  .meta({ id: 'WebhookDocument' });
+
+export const documentEvent = z
+  .strictObject({ type: z.enum(DOCUMENT_EVENTS), timestamp: when.meta({ description: 'When the event happened.' }), data: z.strictObject({ document: webhookDocument }) })
+  .meta({ id: 'DocumentEvent', description: 'A document was sent, completed (and sealed), declined, voided or expired.' });
+
+export const personEvent = z
+  .strictObject({
+    type: z.literal('person.completed'),
+    timestamp: when,
+    data: z.strictObject({
+      document: webhookDocument,
+      person: z.strictObject({ id: uuid, name: z.string(), email: z.string(), role: person.shape.role, status: z.enum(['signed', 'approved']), completed_at: when.nullable() }),
+    }),
+  })
+  .meta({ id: 'PersonEvent', description: 'A person signed or approved.' });
+
+export const testEvent = z
+  .strictObject({ type: z.literal('webhook.test'), timestamp: when, data: z.strictObject({ message: z.string() }) })
+  .meta({ id: 'TestEvent', description: 'Sent by "Send a test event" on the Webhooks page.' });
+
+export const webhookEvent = z.discriminatedUnion('type', [documentEvent, personEvent, testEvent]);

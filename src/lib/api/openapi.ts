@@ -14,7 +14,7 @@ function components(): Record<string, Json> {
   const output = toRefs('output');
   const pick: Record<string, Json> = {};
   for (const name of ['CreateDocument', 'SendDocument']) pick[name] = input[name];
-  for (const name of ['Error', 'Person', 'Document', 'TemplateList', 'SendResult']) pick[name] = output[name];
+  for (const name of ['Error', 'Person', 'Document', 'TemplateList', 'SendResult', 'WebhookDocument', 'DocumentEvent', 'PersonEvent', 'TestEvent']) pick[name] = output[name];
   for (const s of Object.values(pick)) {
     delete s.id;
     delete s.$schema;
@@ -42,6 +42,29 @@ const idemHeader = {
   schema: { type: 'string', minLength: 1, maxLength: 200 },
   description: 'Makes the request safe to retry: the same key and request within 24 hours returns the first answer (with "Idempotent-Replayed: true") instead of doing it again.',
 };
+
+// D-92: what YouNMeSign posts to a webhook endpoint (OpenAPI 3.1 "webhooks"), signed in the Standard Webhooks format
+const webhookHeaders = [
+  { name: 'webhook-id', in: 'header', required: true, schema: { type: 'string' }, description: 'Unique per delivery and the same on every retry of it: use it to ignore repeats.' },
+  { name: 'webhook-timestamp', in: 'header', required: true, schema: { type: 'string' }, description: 'Seconds since 1970 (UTC) when this attempt was signed. Refuse it if it is more than 5 minutes from your clock.' },
+  {
+    name: 'webhook-signature',
+    in: 'header',
+    required: true,
+    schema: { type: 'string' },
+    description:
+      'One or more "v1,<base64>" separated by spaces: HMAC-SHA256 of "<webhook-id>.<webhook-timestamp>.<raw body>" with the secret (the part after "whsec_", base64-decoded). Accept the request if any one matches, compared in constant time. During a secret change both the new and the previous secret sign for 24 hours.',
+  },
+];
+const webhook = (operationId: string, schema: string, summary: string) => ({
+  post: {
+    operationId,
+    summary,
+    parameters: webhookHeaders,
+    requestBody: { required: true, content: { 'application/json': { schema: ref(schema) } } },
+    responses: { '2XX': { description: 'Received. Any other answer, a redirect, or no answer within 10 seconds counts as a failure and is retried after 1 min, 5 min, 30 min, 2 h, 6 h and 12 h.' } },
+  },
+});
 
 export function openApiDocument(serverUrl: string): Json {
   return {
@@ -104,6 +127,11 @@ export function openApiDocument(serverUrl: string): Json {
           responses: { 200: { description: 'The PDF', content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } } }, ...errors(400, 401, 403, 404, 409, 429) },
         },
       },
+    },
+    webhooks: {
+      documentEvent: webhook('documentEvent', 'DocumentEvent', 'A document was sent, completed, declined, voided or expired'),
+      personEvent: webhook('personEvent', 'PersonEvent', 'A person signed or approved'),
+      testEvent: webhook('testEvent', 'TestEvent', 'A test event from the Webhooks page'),
     },
   };
 }

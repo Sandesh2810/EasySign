@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { Suspense } from 'react';
 import { requireUser } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
@@ -46,6 +47,16 @@ async function Settings({ searchParams }: { searchParams: Promise<Record<string,
         <h2 id="api-heading" className="mb-1 mt-1 text-base font-medium text-ink">API keys</h2>
         <p className="mb-4 text-sm text-ink-muted">For connecting another system. A key acts as the person who made it, with their permissions and daily limits, and stops working if they leave the workspace. Keep keys secret like passwords.</p>
         <ApiKeys orgId={ws.orgId} keys={(apiKeys ?? []) as ApiKeyRow[]} />
+      </section>
+    ) : null}
+    {ws.role === 'owner' || ws.role === 'admin' ? (
+      <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="webhooks-heading">
+        <p className="text-sm text-ink-muted">{ws.name}</p>
+        <h2 id="webhooks-heading" className="mb-1 mt-1 text-base font-medium text-ink">Webhooks</h2>
+        <p className="mb-4 text-sm text-ink-muted">Have another system told straight away when a document is sent, signed, completed, declined, voided or expires. Every event is signed so the receiver can check it came from us.</p>
+        <Link href="/app/settings/webhooks" className="inline-flex min-h-11 items-center rounded-pill border border-control-border bg-surface px-6 text-base font-medium text-ink hover:bg-surface-sand">
+          Manage webhooks
+        </Link>
       </section>
     ) : null}
     <ExportSection owner={ws.role === 'owner'} note={typeof exportNote === 'string' ? exportNote : null} />

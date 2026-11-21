@@ -4,8 +4,26 @@ import { PRODUCT_NAME } from '@/config/brand';
 import { env } from '@/lib/env';
 import { openApiDocument } from '@/lib/api/openapi';
 import { API_RATE } from '@/lib/api/limits';
+import { DOCUMENT_EVENTS } from '@/lib/api/schemas';
 
 export const metadata: Metadata = { title: 'API for developers' };
+
+// D-92: the receiver-side check, in Node. scripts/webhooks-e2e.mjs uses this same code against real deliveries.
+const VERIFY_EXAMPLE = `import { createHmac, timingSafeEqual } from 'node:crypto';
+
+// secret: "whsec_…"; headers: the request headers; rawBody: the body as received (do not re-encode the JSON)
+function verifyWebhook(secret, headers, rawBody) {
+  const id = headers['webhook-id'];
+  const ts = headers['webhook-timestamp'];
+  if (!id || !/^\\d+$/.test(ts ?? '') || Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+  const key = Buffer.from(secret.slice('whsec_'.length), 'base64');
+  const expected = createHmac('sha256', key).update(\`\${id}.\${ts}.\${rawBody}\`).digest();
+  return (headers['webhook-signature'] ?? '').split(' ').some((part) => {
+    const [version, sig] = part.split(',');
+    const got = Buffer.from(sig ?? '', 'base64');
+    return version === 'v1' && got.length === expected.length && timingSafeEqual(got, expected);
+  });
+}`;
 
 type Schema = { type?: string | string[]; properties?: Record<string, Schema>; required?: string[]; enum?: unknown[]; description?: string; $ref?: string; items?: Schema; anyOf?: Schema[]; default?: unknown; format?: string };
 type Op = { operationId: string; summary: string; description: string; parameters?: { name: string; in: string; required?: boolean; description?: string }[]; requestBody?: { content: Record<string, { schema: Schema }> }; responses: Record<string, { description: string }> };
@@ -114,6 +132,50 @@ export default function DevelopersPage() {
             );
           }),
         )}
+        <section id="webhooks" className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="webhooks-heading">
+          <h2 id="webhooks-heading" className="mb-2 text-base font-medium text-ink">
+            Webhooks: being told when something happens
+          </h2>
+          <ul className="flex list-disc flex-col gap-2 pl-5 text-base text-ink-body">
+            <li>
+              Add an endpoint in <strong>Settings → Webhooks</strong> (owners and administrators): an https address on the public internet and the events you want. The signing secret (<code className="font-mono text-sm">whsec_…</code>) is shown once.
+            </li>
+            <li>
+              Events:{' '}
+              {[...DOCUMENT_EVENTS, 'person.completed', 'webhook.test'].map((e, i) => (
+                <span key={e}>
+                  {i ? ', ' : ''}
+                  <code className="font-mono text-sm">{e}</code>
+                </span>
+              ))}
+              . Each is a POST with a JSON body <code className="font-mono text-sm">{'{ "type", "timestamp", "data" }'}</code>; <code className="font-mono text-sm">data.document</code> has the fields below, and <code className="font-mono text-sm">person.completed</code> adds <code className="font-mono text-sm">data.person</code> (id, name, email, role, status, completed_at). No signing links are ever sent.
+            </li>
+            <li>
+              Answer with any 2xx status within 10 seconds. Anything else is retried after 1 min, 5 min, 30 min, 2 h, 6 h and 12 h (7 attempts); redirects are not followed. The same <code className="font-mono text-sm">webhook-id</code> is used on every retry, so you can ignore repeats. After 5 deliveries in a row fail completely the endpoint is switched off.
+            </li>
+            <li>
+              Every request is signed in the open{' '}
+              <a href="https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md">Standard Webhooks</a> format, so its libraries can check it for you. To check it yourself: refuse a <code className="font-mono text-sm">webhook-timestamp</code> more than 5 minutes from your clock (this stops replays), then compare the signature over the raw body, exactly as received:
+            </li>
+          </ul>
+          <pre tabIndex={0} role="region" aria-label="Example: checking a webhook signature in Node" className="mt-3 overflow-x-auto rounded-sm bg-surface-sand p-3 font-mono text-xs text-ink">
+            {VERIFY_EXAMPLE}
+          </pre>
+          <h3 className="mt-4 text-sm font-medium text-ink">
+            Fields of <code className="font-mono">data.document</code> (WebhookDocument)
+          </h3>
+          <dl className="mt-1 flex flex-col text-sm">
+            {fields('WebhookDocument').map((f) => (
+              <div key={f.name} className="border-t border-hairline py-1">
+                <dt className="font-mono text-ink">{f.name}</dt>
+                <dd className="text-ink-body [overflow-wrap:anywhere]">
+                  {f.type}
+                  {f.note ? ` · ${f.note}` : ''}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
       </main>
     </div>
   );

@@ -183,7 +183,13 @@ async function prepare() {
   await rpc(db, 'save_recipients', { p_actor: sender.id, p_envelope_id: inPerson.id,
     p_recipients: [{ id: inPerson.recipients[0].id, name: 'Ines Inperson', email: 'a11y-inperson@example.test', role: 'in_person', routing_order: 1 }] });
   await sendWithLink(inPerson);
-  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId, inPersonId: inPerson.id, formSlug };
+  // Phase 5 slice 3 (D-92): one webhook endpoint with a delivery in its log. The ".test" name never resolves and the
+  // stored secret is a placeholder, so nothing leaves this PC (the worker records "Not sent").
+  for (const e of (await rpc(db, 'webhook_endpoint_list', { p_actor: sender.id, p_org: orgId })) ?? []) await rpc(db, 'webhook_endpoint_delete', { p_actor: sender.id, p_id: e.id });
+  const webhookId = randomUUID();
+  await rpc(db, 'webhook_endpoint_create', { p_actor: sender.id, p_org: orgId, p_id: webhookId, p_url: 'https://hooks.example.test/a11y', p_description: 'Accessibility check', p_events: ['document.completed', 'person.completed'], p_secret_enc: `v1.${'A'.repeat(60)}` });
+  await rpc(db, 'webhook_test', { p_actor: sender.id, p_id: webhookId });
+  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId, inPersonId: inPerson.id, formSlug, webhookId };
 }
 
 /** Press Tab until the focused element's name matches, then press the key. Fails if it is never reached. */
@@ -449,6 +455,7 @@ async function main() {
       ['Sender: folders', '/app/folders'],
       ['Sender: notifications', '/app/notifications'],
       ['Sender: settings', '/app/settings'],
+      ['Sender: webhooks and a delivery log', `/app/settings/webhooks?log=${data.webhookId}`],
       ['Sender: sign-in security', '/app/account/security'],
       ['Sender: team', '/app/team'],
       ['Sender: templates', '/app/templates'],
