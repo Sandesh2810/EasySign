@@ -181,6 +181,20 @@ export async function declineAction(reason: string): Promise<SignResult> {
   return { ok: true };
 }
 
+/** D-84: ask the sender a question about this document (kept in the document's audit trail). */
+export async function commentAction(body: string): Promise<SignResult> {
+  const ctx = await loadSignerContext();
+  if (!ctx) return { ok: false, message: EXPIRED };
+  if (!(await allow({ bucket: 'sign_comment', limit: 20, windowSeconds: 3600 }, ctx.tokenId))) return { ok: false, message: TOO_MANY };
+  const text = z.string().trim().min(1, 'Write your question first.').max(1000, 'Keep it under 1000 characters.').safeParse(body);
+  if (!text.success) return { ok: false, message: text.error.issues[0]?.message ?? 'Write your question first.' };
+  const { ip, ua } = await requestEvidence();
+  const { error } = await supabaseAdmin().rpc('signer_comment', { p_token_id: ctx.tokenId, p_body: text.data, p_ip: ip, p_user_agent: ua });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath('/sign');
+  return { ok: true };
+}
+
 /**
  * D-83 (AT4.6): hand my part to someone else, when the sender allowed it. My link stops working at once; the new person
  * gets a fresh one (by email when the sender sends by email; otherwise the sender shares it). The sender is told.

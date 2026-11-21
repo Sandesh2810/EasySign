@@ -98,6 +98,38 @@ export function signatureRequestTemplate(v: { signerName: string; senderName: st
   };
 }
 
+/** D-84: the sender answered a person's question about a document; their link opens it again. */
+export function commentReplyTemplate(v: { name: string; senderName: string; title: string; answer: string; signUrl: string; expiresOn: string }): RenderedEmail {
+  const subject = oneLine(`${v.senderName} answered your question about "${v.title}"`);
+  return {
+    subject,
+    html: layout({
+      preheader: `${v.senderName} answered your question.`,
+      heading: 'You have an answer',
+      paragraphs: [
+        `Hello ${esc(v.name)},`,
+        `${esc(v.senderName)} answered your question about <strong>${esc(v.title)}</strong>:`,
+        `<span style="display:block;padding:12px 16px;border-left:3px solid #e3e0d7;white-space:pre-wrap;">${esc(v.answer)}</span>`,
+        'The whole conversation is on the document page. Nothing has been signed.',
+      ],
+      button: { label: 'Open the document', url: v.signUrl },
+      footnote: `This link is personal to you and works until ${esc(v.expiresOn)}. Do not forward this email: anyone who has the link can act on the document.`,
+    }),
+    text: [
+      `Hello ${v.name},`,
+      '',
+      `${v.senderName} answered your question about "${v.title}":`,
+      '',
+      v.answer,
+      '',
+      'The whole conversation is on the document page. Nothing has been signed. Open this link:',
+      v.signUrl,
+      '',
+      `The link is personal to you and works until ${v.expiresOn}. Do not forward this email: anyone who has the link can act on the document.`,
+    ].join('\n'),
+  };
+}
+
 /** Tells the sender that a document reached its expiry date before everyone finished. */
 /** The six-digit code a signer asked for on the code screen. No link: the code is typed into the page they already have open. */
 export function otpTemplate(v: { name: string; title: string; code: string; minutes: number }): RenderedEmail {

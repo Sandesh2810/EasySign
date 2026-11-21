@@ -12,6 +12,11 @@ const SELECT = 'min-h-11 rounded-sm border border-control-border bg-surface px-3
 
 export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: string; selfSign: boolean; hasSigner: boolean }) {
   const [state, action, pending] = useActionState<ActionResult | null, FormData>(sendEnvelopeAction, null);
+  // D-84: send now, or at a chosen time (the browser's local time, turned into an exact moment here)
+  const [when, setWhen] = useState<'now' | 'later'>('now');
+  const [local, setLocal] = useState('');
+  const sendAt = when === 'later' && local && !Number.isNaN(new Date(local).getTime()) ? new Date(local).toISOString() : '';
+  const later = when === 'later';
   return (
     <form action={action} className="flex flex-col gap-3">
       <input type="hidden" name="envelope_id" value={envelopeId} />
@@ -70,6 +75,31 @@ export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: str
           </span>
         </label>
       )}
+      {selfSign ? null : (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium text-ink">When to send</legend>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+              <input type="radio" name="when" value="now" checked={!later} onChange={() => setWhen('now')} className="size-5 accent-ink" />
+              Now
+            </label>
+            <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+              <input type="radio" name="when" value="later" checked={later} onChange={() => setWhen('later')} className="size-5 accent-ink" />
+              At a time I choose
+            </label>
+          </div>
+          {later ? (
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="send-at" className="text-sm font-medium text-ink">
+                Date and time (your time zone)
+              </label>
+              <input id="send-at" type="datetime-local" value={local} onChange={(e) => setLocal(e.target.value)} className={`${SELECT} w-fit`} required />
+              <input type="hidden" name="send_at" value={sendAt} />
+              <p className="text-sm text-ink-muted">From 5 minutes to 60 days ahead. Everything is checked now; until then the draft is locked (you can cancel the scheduled send to change it).</p>
+            </div>
+          ) : null}
+        </fieldset>
+      )}
       {state && !state.ok ? <Notice tone="danger">{state.message}</Notice> : null}
       <div className="flex flex-wrap gap-2">
         {selfSign ? (
@@ -79,10 +109,10 @@ export function SendPanel({ envelopeId, selfSign, hasSigner }: { envelopeId: str
         ) : (
           <>
             <Button type="submit" name="delivery" value="email" disabled={pending || !hasSigner}>
-              {pending ? 'Sending…' : 'Send by email'}
+              {pending ? (later ? 'Scheduling…' : 'Sending…') : later ? 'Schedule to send by email' : 'Send by email'}
             </Button>
             <Button type="submit" name="delivery" value="link" variant="outline" disabled={pending || !hasSigner}>
-              Get a link to share instead
+              {later ? 'Schedule, and share the links myself' : 'Get a link to share instead'}
             </Button>
           </>
         )}

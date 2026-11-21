@@ -23,6 +23,8 @@ import { PersonActions, VoidPanel } from "./open-actions";
 import { RecipientsEditor, type EditableRecipient } from "./recipients-editor";
 import { groupsOf, representatives } from "@/lib/groups";
 import { SendPanel, SigningLinkPanel } from "./send-panel";
+import { ScheduleBanner } from "./schedule-banner";
+import { Conversations, type Conversation } from "./conversations";
 import { SenderTasks, type TaskView } from "./sender-tasks";
 import { DeleteForm, LegalHoldForm } from "./retention-panel";
 import { retentionWindow } from "@/lib/retention";
@@ -134,8 +136,21 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     .eq("envelope_id", id.data)
     .order("created_at");
   const handoffs = (handoffRows ?? []) as { id: string; by_kind: string; from_name: string; to_name: string; to_email: string; reason: string | null; created_at: string }[];
+  // D-84: the scheduled send (if any) and each person's conversation with the sender's side
+  const [{ data: schedule }, { data: commentRows }] = await Promise.all([
+    supabase.from("scheduled_sends").select("send_at, delivery, status, error").eq("envelope_id", id.data).maybeSingle(),
+    supabase.from("envelope_comments").select("id, recipient_id, author_kind, body, created_at").eq("envelope_id", id.data).order("created_at"),
+  ]);
+  const scheduled = schedule?.status === "scheduled";
   const doc = docs?.[0];
   const recipients = (recipientRows ?? []) as RecipientRow[];
+  const conversations: Conversation[] = recipients
+    .map((r) => ({
+      recipientId: r.id,
+      name: r.name,
+      items: (commentRows ?? []).filter((c) => c.recipient_id === r.id).map((c) => ({ id: c.id as string, fromSigner: c.author_kind === "signer", body: c.body as string, at: c.created_at as string })),
+    }))
+    .filter((c) => c.items.length > 0);
   // D-81: each signing group appears once in the field editor (its first member); the others get the same fields on save
   const groupOf = groupsOf(recipients);
   const reps = representatives(recipients, (fields ?? []) as { recipient_id: string }[]);
@@ -156,7 +171,7 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     .is("deactivated_at", null)
     .maybeSingle();
   const viewOnly = myMembership?.role === "viewer";
-  const canEditDraft = isDraft && !viewOnly;
+  const canEditDraft = isDraft && !viewOnly && !scheduled;
   // the whole audit trail, archived parts included (D-72); drafts have only their own creation events
   const trail = isDraft
     ? null
@@ -482,15 +497,27 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
           <h2 className="mb-3 text-base font-medium text-ink">
             {isDraft ? "3. Send" : "Signing links"}
           </h2>
-          {isDraft ? (
+          {isDraft && schedule && (scheduled || schedule.status === "failed") ? (
+            <div className="mb-4">
+              <ScheduleBanner envelopeId={env.id} sendAt={schedule.send_at as string} status={schedule.status as string} error={(schedule.error as string | null) ?? null} delivery={schedule.delivery as string} />
+            </div>
+          ) : null}
+          {isDraft && !scheduled ? (
             <SendPanel
               envelopeId={env.id}
               selfSign={selfSign}
               hasSigner={signers.length > 0}
             />
-          ) : (
+          ) : isDraft ? null : (
             <SigningLinkPanel envelopeId={env.id} selfSign={selfSign} />
           )}
+        </section>
+      ) : null}
+
+      {conversations.length ? (
+        <section className="rounded-lg bg-surface p-6 shadow-soft">
+          <h2 className="mb-3 text-base font-medium text-ink">Questions and answers</h2>
+          <Conversations envelopeId={env.id} conversations={conversations} canAnswer={isOpen && !viewOnly} />
         </section>
       ) : null}
 

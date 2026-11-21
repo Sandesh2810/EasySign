@@ -8,7 +8,7 @@ import { hashOtp, otpForOutboxRow } from '@/lib/signer-token';
 import { byteaToBuffer, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
-import { completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, otpTemplate, senderTaskTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
+import { commentReplyTemplate, completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, otpTemplate, senderTaskTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
 import { drainOutbox, type OutboxDeps, type OutboxRow, type Prepared } from './dispatch';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -75,7 +75,8 @@ async function prepareOtp(row: OutboxRow): Promise<Prepared> {
   return { to: recipient.email as string, email: otpTemplate({ name: recipient.name as string, title: envelope.title as string, code, minutes: 10 }) };
 }
 
-async function prepare(row: OutboxRow): Promise<Prepared> {
+/** Builds the email for one outbox row (also used by `npm run outbox:preview`, which sends nothing). */
+export async function prepare(row: OutboxRow): Promise<Prepared> {
   const db = supabaseAdmin();
   if (row.kind === 'digest') return prepareDigest(row);
   if (row.kind === 'otp') return prepareOtp(row);
@@ -138,6 +139,32 @@ async function prepare(row: OutboxRow): Promise<Prepared> {
         kind: task.kind as 'paper_copy' | 'consent_withdrawn',
         note: (task.note as string | null) ?? null,
         openUrl: `${env.appUrl()}/app/envelopes/${envelope.id}`,
+      }),
+    };
+  }
+
+  // D-84: the sender answered a person's question; the email carries the answer and the person's current link
+  if (row.kind === 'comment_reply') {
+    if (!row.recipient_id) throw new Error('answer without a recipient');
+    if (!['sent', 'in_progress'].includes(envelope.status as string)) throw new Error('envelope is no longer open');
+    const commentId = typeof row.payload?.comment_id === 'string' ? row.payload.comment_id : '';
+    const [{ data: recipient }, { data: token }, { data: comment }, sender] = await Promise.all([
+      db.from('recipients').select('name, email').eq('id', row.recipient_id).maybeSingle(),
+      db.from('recipient_tokens').select('id, nonce, expires_at').eq('recipient_id', row.recipient_id).is('revoked_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      db.from('envelope_comments').select('body').eq('id', commentId).eq('recipient_id', row.recipient_id).eq('author_kind', 'sender').maybeSingle(),
+      userEmail(envelope.sender_id as string),
+    ]);
+    if (!recipient || !token || !comment) throw new Error('recipient, link or answer not found');
+    return {
+      to: recipient.email as string,
+      replyTo: sender.email,
+      email: commentReplyTemplate({
+        name: recipient.name as string,
+        senderName: sender.name,
+        title: envelope.title as string,
+        answer: comment.body as string,
+        signUrl: signingLink(token.id as string, byteaToBuffer(token.nonce as string)),
+        expiresOn: new Date(token.expires_at as string).toISOString().slice(0, 10),
       }),
     };
   }

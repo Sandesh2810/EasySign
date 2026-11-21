@@ -22,6 +22,7 @@ const EMAIL_LABEL: Record<string, string> = {
   paper_copy_sender: 'the notice about a paper-copy request',
   withdrawn_sender: 'the notice that consent was withdrawn',
   digest: 'your daily summary',
+  comment_reply: 'your answer to a question',
 };
 
 const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max) : '');
@@ -40,6 +41,13 @@ export function describeNotification(kind: string, payload: unknown): NoticeView
       return { text: `${by} signed ${title}.`, path, tone: 'good' };
     case 'recipient_approved':
       return { text: `${by} approved ${title}.`, path, tone: 'good' };
+    case 'comment_added':
+      // D-84: a question in the document's conversation
+      return { text: `${by} asked a question about ${title}. Open the document to answer.`, path, tone: 'attention' };
+    case 'scheduled_send_failed': {
+      const why = str(p.error, 300);
+      return { text: `${title} could not be sent at the time you chose${why ? `: ${why}` : ''}. It is still a draft; fix it and send or schedule it again.`, path, tone: 'attention' };
+    }
     case 'recipient_delegated': {
       // D-83: a signer handed their part to someone else; their old link no longer works
       const to = str(p.to, 120) || 'someone else';

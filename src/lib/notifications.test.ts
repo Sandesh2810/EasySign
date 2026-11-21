@@ -16,6 +16,8 @@ describe('in-app notices', () => {
       'recipient_signed',
       'recipient_approved',
       'recipient_delegated',
+      'comment_added',
+      'scheduled_send_failed',
       'envelope_completed',
       'envelope_declined',
       'envelope_expired',
@@ -42,6 +44,13 @@ describe('in-app notices', () => {
     const v = describeNotification('recipient_delegated', { envelope_id: ID, title: 'Lease 2027', by: 'Ann Able', to: 'Dan Delegate' });
     expect(v.text).toBe("Ann Able handed \"Lease 2027\" to Dan Delegate. Ann Able's link no longer works; Dan Delegate has their own. If you share links yourself, copy Dan Delegate's link from the document page.");
     expect(v.path).toBe(`/app/envelopes/${ID}`);
+  });
+
+  it('a question and a failed scheduled send say what happened and what to do (D-84)', () => {
+    expect(describeNotification('comment_added', { envelope_id: ID, title: 'Lease 2027', by: 'Ann Able' }).text).toBe('Ann Able asked a question about "Lease 2027". Open the document to answer.');
+    expect(describeNotification('scheduled_send_failed', { envelope_id: ID, title: 'Report', error: 'account suspended' }).text).toBe(
+      '"Report" could not be sent at the time you chose: account suspended. It is still a draft; fix it and send or schedule it again.',
+    );
   });
 
   it('a held email tells the sender what waits, until when, and what they can do now', () => {

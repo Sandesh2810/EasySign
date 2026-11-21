@@ -16,3 +16,16 @@ describe('sender task emails (AT3.3)', () => {
     expect(m.text).not.toContain('Their reason');
   });
 });
+
+describe('answer emails (D-84)', () => {
+  it("carries the sender's answer escaped, one-line subject, the person's link and its end date", async () => {
+    const { commentReplyTemplate } = await import('./templates');
+    const m = commentReplyTemplate({ name: 'Ann', senderName: 'Sam\nSender', title: 'Lease <1>', answer: 'Yes, <b>within</b> 10%.\nSee clause 4.', signUrl: 'https://x.test/s#tok', expiresOn: '2026-12-31' });
+    expect(m.subject).toBe('Sam Sender answered your question about "Lease <1>"');
+    expect(m.html).toContain('Yes, &lt;b&gt;within&lt;/b&gt; 10%.');
+    expect(m.html).not.toContain('<b>within');
+    expect(m.html).toContain('https://x.test/s#tok');
+    expect(m.text).toContain('Yes, <b>within</b> 10%.\nSee clause 4.');
+    expect(m.text).toContain('works until 2026-12-31');
+  });
+});

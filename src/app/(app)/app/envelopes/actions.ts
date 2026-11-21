@@ -163,6 +163,15 @@ export async function sendEnvelopeAction(_prev: ActionResult | null, formData: F
   if (reminders.error) return { ok: false, message: friendlyDbError(reminders.error.message).message };
   const delegation = await admin.rpc('set_delegation', { p_actor: user.id, p_envelope_id: id.data, p_allow: formData.get('allow_delegation') === 'on' });
   if (delegation.error) return { ok: false, message: friendlyDbError(delegation.error.message).message };
+  // D-84: send at a chosen time. The database checks everything now and locks the draft; the worker sends it then.
+  if (formData.get('when') === 'later') {
+    const at = z.iso.datetime({ offset: true }).safeParse(formData.get('send_at'));
+    if (!at.success) return { ok: false, message: 'Choose the date and time to send it.' };
+    const scheduled = await admin.rpc('schedule_send', { p_actor: user.id, p_envelope_id: id.data, p_send_at: at.data, p_expires_days: expiryDays, p_delivery: delivery.data, p_tokens: tokens });
+    if (scheduled.error) return { ok: false, message: friendlyDbError(scheduled.error.message).message };
+    revalidatePath(`/app/envelopes/${id.data}`);
+    return { ok: true, message: 'Scheduled.' };
+  }
   const { error } = await admin.rpc('send_envelope', { p_actor: user.id, p_envelope_id: id.data, p_tokens: tokens, p_expires_at: expires, p_delivery: delivery.data });
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
   revalidatePath(`/app/envelopes/${id.data}`);
@@ -290,6 +299,33 @@ export async function correctRecipientAction(_prev: ActionResult | null, formDat
           ? 'Name corrected. Their link is unchanged.'
           : 'Nothing was changed.',
   };
+}
+
+/** D-84: cancel a scheduled send; the draft can be edited again. */
+export async function cancelScheduledSendAction(envelopeId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const id = z.uuid().safeParse(envelopeId);
+  if (!id.success) return { ok: false, message: 'Document not found.' };
+  const { error } = await supabaseAdmin().rpc('cancel_scheduled_send', { p_actor: user.id, p_envelope_id: id.data });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath(`/app/envelopes/${id.data}`);
+  return { ok: true, message: 'The scheduled send was cancelled. The document is a draft again.' };
+}
+
+/** D-84: answer a person's question (kept in the audit trail; emailed to them when you send by email). */
+const answerSchema = z.object({
+  envelope_id: z.uuid(),
+  recipient_id: z.uuid(),
+  body: z.string().trim().min(1, 'Write your answer first.').max(1000, 'Keep it under 1000 characters.'),
+});
+export async function answerQuestionAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = answerSchema.safeParse({ envelope_id: formData.get('envelope_id'), recipient_id: formData.get('recipient_id'), body: formData.get('body') });
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'Write your answer first.' };
+  const { error } = await supabaseAdmin().rpc('sender_comment', { p_actor: user.id, p_envelope_id: parsed.data.envelope_id, p_recipient_id: parsed.data.recipient_id, p_body: parsed.data.body });
+  if (error) return { ok: false, message: friendlyDbError(error.message).message };
+  revalidatePath(`/app/envelopes/${parsed.data.envelope_id}`);
+  return { ok: true, message: 'Answer sent.' };
 }
 
 /**

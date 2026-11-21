@@ -148,6 +148,12 @@ async function prepare() {
   };
   const sent = await makeEnvelope('Accessibility check (signing)', [SIGNER], false, true);
   const token = await sendWithLink(sent);
+  // Phase 4 slice 8 (D-84): a question and its answer, so the open "Questions for the sender" panel is audited too
+  const qa = await db.from('envelope_comments').insert([
+    { org_id: orgId, envelope_id: sent.id, recipient_id: sent.recipients[0].id, author_kind: 'signer', body: 'Is clause 4 negotiable?' },
+    { org_id: orgId, envelope_id: sent.id, recipient_id: sent.recipients[0].id, author_kind: 'sender', author_user: sender.id, body: 'Yes, within 10%.' },
+  ]);
+  if (qa.error) throw new Error(`questions: ${qa.error.message}`);
   const keyboardOnly = await makeEnvelope('Accessibility check (keyboard only)', [{ name: 'Kim Keys', email: 'a11y-keys@example.test' }], true);
   const keyboardToken = await sendWithLink(keyboardOnly);
   return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId };

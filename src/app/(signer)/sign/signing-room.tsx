@@ -37,6 +37,8 @@ interface Props {
   mode: 'sign' | 'approve' | 'view';
   /** D-83: the sender lets this person hand their part to someone else */
   allowHandOff?: boolean;
+  /** D-84: the person's questions for the sender (rendered above the document) */
+  questions?: React.ReactNode;
 }
 interface PageInfo {
   width: number;
@@ -56,7 +58,7 @@ const isTyped = (t: FieldType) => TYPED_TYPES.includes(t);
 const isPicked = (t: FieldType) => t === 'checkbox' || t === 'radio' || t === 'dropdown' || t === 'attachment';
 const safeUrl = (u?: string) => (u && /^https?:\/\//i.test(u) ? u : null);
 
-export function SigningRoom({ title, senderLine, signer, fields, adopted, intentText, mode, allowHandOff = false }: Props) {
+export function SigningRoom({ title, senderLine, signer, fields, adopted, intentText, mode, allowHandOff = false, questions = null }: Props) {
   const router = useRouter();
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -314,6 +316,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
           </div>
         ) : null}
         {loadError ? <Notice tone="danger">{loadError}</Notice> : null}
+        {questions ? <div className="mb-3">{questions}</div> : null}
         {/* The pages below are pictures. The same file, opened in a PDF app, can be read aloud by a screen reader (WCAG 1.1.1, slice 9). */}
         <p className="mb-3 px-2 text-sm text-ink-body">
           <a href="/api/sign/document" target="_blank" rel="noopener">

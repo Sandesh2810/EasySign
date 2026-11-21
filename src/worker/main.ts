@@ -37,6 +37,10 @@ async function runDue(): Promise<boolean> {
   const digests = await supabaseAdmin().rpc('queue_digests', {});
   if (digests.error) throw new Error(`queue_digests: ${digests.error.message}`);
   const digestCount = typeof digests.data === 'number' ? digests.data : 0;
+  // D-84: documents scheduled to go out by now (a failure leaves the draft and tells the sender, inside the database)
+  const scheduled = await supabaseAdmin().rpc('run_scheduled_sends', { p_limit: 10 });
+  if (scheduled.error) throw new Error(`run_scheduled_sends: ${scheduled.error.message}`);
+  if (typeof scheduled.data === 'number' && scheduled.data > 0) log(`due: ${scheduled.data} scheduled document(s) sent`);
   if ((row && (row.expired_count > 0 || row.reminder_count > 0)) || digestCount > 0) {
     log(`due: ${row?.expired_count ?? 0} document(s) expired, ${row?.reminder_count ?? 0} reminder(s) queued, ${digestCount} daily summar${digestCount === 1 ? 'y' : 'ies'} queued`);
     return true;

@@ -10,6 +10,7 @@ import { ConsentForm } from './consent-form';
 import { Notice } from '@/components/ui';
 import { DeclineControl } from './decline';
 import { HandOffControl } from './handoff';
+import { QuestionsPanel, type ThreadItem } from './questions';
 import { PaperCopyControl } from './paper-withdraw';
 import { Finalising } from './finalising';
 import { AccessCodeForm, EmailCodeForm } from './gate-form';
@@ -115,6 +116,13 @@ async function Sign() {
     return <Message title="This document is no longer open for signing" body={`Ask ${senderName === 'you' ? 'the sender' : senderName} if you think this is a mistake.`} />;
   }
   const senderLine = recipient.is_sender ? 'You are signing your own document' : `Sent by ${senderName}`;
+  // D-84: this person's private conversation with the sender (not shown to someone signing their own document)
+  const questions = async () => {
+    if (recipient.is_sender) return null;
+    const { data } = await admin.from('envelope_comments').select('id, author_kind, body, created_at').eq('recipient_id', recipient.id).order('created_at');
+    const thread: ThreadItem[] = (data ?? []).map((c) => ({ id: c.id as string, mine: c.author_kind === 'signer', body: c.body as string, at: c.created_at as string }));
+    return <QuestionsPanel thread={thread} senderName={senderName === 'you' ? 'the sender' : senderName} />;
+  };
   if (recipient.status === 'signed' || recipient.status === 'approved') {
     const { count: stillWaiting } = await admin
       .from('recipients')
@@ -168,6 +176,7 @@ async function Sign() {
           ))}
         </div>
         <ConsentForm signerName={recipient.name} paperRequested={Boolean(openPaper)} />
+        {recipient.role !== 'viewer' ? <div className="mt-8">{await questions()}</div> : null}
         {/* a div, not a paragraph: the control carries its own dialog, which may not sit inside a <p> */}
         <div className="mt-6 flex flex-wrap gap-2">
           {openPaper ? null : <PaperCopyControl variant="quiet" />}
@@ -181,7 +190,7 @@ async function Sign() {
     return <Message title="Nothing is waiting for you here" body="There is no signing step left for you on this document." />;
   }
   if (recipient.role === 'approver') {
-    return <SigningRoom mode="approve" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText={APPROVE_TEXT} allowHandOff={envelope.allow_delegation} />;
+    return <SigningRoom mode="approve" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText={APPROVE_TEXT} allowHandOff={envelope.allow_delegation} questions={await questions()} />;
   }
 
   const [{ data: fields }, { data: values }, { data: assets }] = await Promise.all([
@@ -214,6 +223,7 @@ async function Sign() {
       adopted={{ signature: kinds.has('signature'), initials: kinds.has('initials') }}
       intentText={INTENT_TEXT}
       allowHandOff={envelope.allow_delegation}
+      questions={await questions()}
     />
   );
 }
