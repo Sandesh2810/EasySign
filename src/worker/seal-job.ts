@@ -72,7 +72,8 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
       // always drawn, so an unticked box is visibly unticked on the signed copy (D-78)
       sealFields.push({ page: f.page as number, rect, kind: 'check', checked: v?.value_text === 'true' });
     } else if (f.type === 'note') {
-      const text = String((f.options as { text?: string } | null)?.text ?? '').trim();
+      // D-80: the note with its merge text filled in when the document was sent, else the text as written
+      const text = String((v?.value_text as string | null | undefined) || ((f.options as { text?: string } | null)?.text ?? '')).trim();
       if (text) sealFields.push({ page: f.page as number, rect, kind: 'note', text });
     } else if (f.type === 'formula') {
       const c = form.computed.get(f.id as string);

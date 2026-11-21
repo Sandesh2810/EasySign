@@ -1,6 +1,7 @@
 // Field definitions shared by the editor (browser) and the server actions. No server-only imports here.
 import { z } from 'zod';
 import { ExprError, parse } from './expr';
+import { mergeProblem, placeholders } from './merge';
 
 export const FIELD_TYPES = [
   'signature', 'initials', 'date_signed', 'name', 'email', 'company', 'title', 'text',
@@ -89,6 +90,9 @@ export const fieldOptionsSchema = z
     name: z.string().max(31).optional(),
     formula: z.string().max(300).optional(),
     show_if: z.string().max(300).optional(),
+    // D-80: a value the sender fills in before sending (may use merge text such as {{name}}), and whether the signer may change it
+    prefill: z.string().max(500).optional(),
+    readonly: z.boolean().optional(),
   })
   .strict();
 export type FieldOptions = z.infer<typeof fieldOptionsSchema>;
@@ -101,6 +105,12 @@ export function fieldOptionsProblem(type: FieldType, o: FieldOptions = {}): stri
     if (type === 'signature' || type === 'initials') return 'Signatures and initials are always shown; they cannot have a condition.';
     const p = exprProblem(o.show_if);
     if (p) return `Condition: ${p}`;
+  }
+  const pre = prefillProblem(type, o);
+  if (pre) return pre;
+  if (type === 'note' && o.text) {
+    const m = mergeProblem(o.text);
+    if (m) return `Note: ${m}`;
   }
   switch (type) {
     case 'formula': {
@@ -177,6 +187,27 @@ export function checkFieldValue(type: FieldType, o: FieldOptions, raw: string): 
 export const NAME_PATTERN = /^[a-z][a-z0-9_]{0,30}$/;
 /** Fields whose value a formula or condition can use (and so can carry a name). */
 export const NAMEABLE: readonly FieldType[] = ['text', 'company', 'title', 'number', 'checkbox', 'radio', 'dropdown', 'formula'];
+
+/** Fields the sender can fill in before sending (D-80). Merge text only in typed text fields. */
+export const PREFILLABLE: readonly FieldType[] = ['text', 'company', 'title', 'number', 'checkbox', 'radio', 'dropdown'];
+const MERGEABLE: readonly FieldType[] = ['text', 'company', 'title'];
+
+function prefillProblem(type: FieldType, o: FieldOptions): string | null {
+  const v = o.prefill?.trim() ?? '';
+  if (o.readonly && v === '') return 'A value the signer cannot change needs a prefilled value.';
+  if (o.prefill === undefined) return null;
+  if (!PREFILLABLE.includes(type)) return 'Only fields the signer fills in can be prefilled.';
+  if (v === '') return null;
+  if (MERGEABLE.includes(type)) {
+    const m = mergeProblem(v);
+    if (m) return `Prefilled value: ${m}`;
+    if (placeholders(v).length) return null; // checked again with the real values when the document is sent
+  } else if (placeholders(v).length) {
+    return 'Merge text such as {{name}} can only be used in text, company and title fields.';
+  }
+  const c = checkFieldValue(type, o, v);
+  return c ? `Prefilled value: ${c}` : null;
+}
 
 function exprProblem(src: string): string | null {
   try {

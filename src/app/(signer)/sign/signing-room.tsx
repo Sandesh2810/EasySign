@@ -359,7 +359,9 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                       </button>
                     );
                   }
-                  const need = f.required ? ' (required)' : ' (optional)';
+                  // D-80: a value the sender filled in and locked is shown, announced as such, and cannot be changed (the database refuses it too)
+                  const ro = f.options?.readonly === true;
+                  const need = (f.required ? ' (required)' : ' (optional)') + (ro ? ', filled in by the sender, cannot be changed' : '');
                   const filled = (values[f.id] ?? '').trim() !== '';
                   if (f.type === 'checkbox') {
                     return (
@@ -371,6 +373,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         }}
                         aria-label={`Checkbox${need}`}
                         checked={values[f.id] === 'true'}
+                        disabled={ro}
                         onChange={(e) => pick(f, e.target.checked ? 'true' : '')}
                         style={{ ...box, margin: 0 }}
                         className="absolute accent-[#141414] focus-visible:outline-4"
@@ -389,6 +392,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                               name={`radio-${f.id}`}
                               value={c}
                               checked={values[f.id] === c}
+                              disabled={ro}
                               onChange={() => pick(f, c)}
                               ref={(el) => {
                                 if (i === 0) targets.current[f.id] = el;
@@ -410,6 +414,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         }}
                         aria-label={`Dropdown${need}`}
                         value={values[f.id] ?? ''}
+                        disabled={ro}
                         onChange={(e) => pick(f, e.target.value)}
                         style={{ ...box, color: '#141414', fontSize, backgroundColor: filled ? '#ffffff' : '#fff3bf' }}
                         className="absolute rounded-sm border-2 border-[#141414] px-1 focus-visible:outline-4"
@@ -426,7 +431,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                   if (f.type === 'note') {
                     return (
                       <div key={f.id} role="note" style={{ ...box, color: '#141414', fontSize: Math.min(fontSize, 12) }} className="absolute overflow-auto rounded-sm border border-[#5a5a5a] bg-white px-1 leading-snug">
-                        {f.options?.text}
+                        {/* D-80: the note's text with merge fields filled in when the document was sent */}
+                        {f.value || f.options?.text}
                       </div>
                     );
                   }
@@ -486,14 +492,18 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                         placeholder={FIELD_LABEL[f.type]}
                         value={values[f.id] ?? ''}
                         maxLength={500}
+                        readOnly={ro}
                         onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
-                        onBlur={() => void saveValue(f)}
+                        onBlur={() => {
+                          if (!ro) void saveValue(f);
+                        }}
                         // On a narrow screen the field on the page is too small to read or tap: a tap (or Start/Next) opens the
                         // large box instead. Not on focus alone: tabbing onto a field must not move focus elsewhere (WCAG 3.2.1, slice 9).
                         onClick={() => {
-                          if (window.innerWidth < 640) setEditing(f.id);
+                          if (!ro && window.innerWidth < 640) setEditing(f.id);
                         }}
-                        style={{ ...box, color: '#141414', backgroundColor: (values[f.id] ?? '').trim() ? '#ffffff' : '#fff3bf', fontSize }}
+                        title={ro ? 'Filled in by the sender' : undefined}
+                        style={{ ...box, color: '#141414', backgroundColor: ro ? '#f3f3f3' : (values[f.id] ?? '').trim() ? '#ffffff' : '#fff3bf', fontSize }}
                         className="absolute rounded-sm border-2 border-[#141414] px-1 placeholder:text-[#5a5a5a] focus-visible:outline-4"
                       />
                     );

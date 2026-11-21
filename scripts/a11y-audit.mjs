@@ -109,6 +109,8 @@ async function prepare() {
         // Phase 4 slice 4 (D-79): a calculated field (shown) and a field with a condition (hidden until qty > 50)
         { document_id: doc.id, recipient_id: r.id, type: 'formula', page: 1, x: 0.12, y: 0.38, w: 0.2, h: 0.035, required: false, options: { formula: `qty_${i} * 2.5` } },
         { document_id: doc.id, recipient_id: r.id, type: 'text', page: 1, x: 0.4, y: 0.38, w: 0.3, h: 0.035, required: false, options: { show_if: `qty_${i} > 50` } },
+        // Phase 4 slice 5 (D-80): a locked prefilled value with merge text
+        { document_id: doc.id, recipient_id: r.id, type: 'company', page: 1, x: 0.12, y: 0.43, w: 0.3, h: 0.035, required: false, options: { prefill: 'For {{name}}', readonly: true } },
         { document_id: doc.id, recipient_id: r.id, type: 'note', page: 1, x: 0.4, y: 0.24, w: 0.45, h: 0.05, options: { text: 'Please read the terms before signing.' } },
         { document_id: doc.id, recipient_id: r.id, type: 'hyperlink', page: 1, x: 0.12, y: 0.32, w: 0.3, h: 0.03, options: { url: 'https://example.com/terms', label: 'Our terms' } },
         { document_id: doc.id, recipient_id: r.id, type: 'attachment', page: 1, x: 0.5, y: 0.32, w: 0.35, h: 0.04, required: false },

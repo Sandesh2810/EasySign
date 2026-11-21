@@ -3,7 +3,8 @@
 // note text, link, and the check for typed text. Inputs save when you leave them (not on every key press), so undo
 // stays useful. The database checks the same settings again when the document is sent.
 import { type ReactNode } from 'react';
-import { FIELD_LABEL, INFO_ONLY, NAMEABLE, TEXT_CHECKS, type FieldOptions, type FieldType, type TextCheck } from '@/lib/fields';
+import { FIELD_LABEL, INFO_ONLY, NAMEABLE, PREFILLABLE, TEXT_CHECKS, type FieldOptions, type FieldType, type TextCheck } from '@/lib/fields';
+import { MERGE_FIELDS, MERGE_LABEL } from '@/lib/merge';
 import type { EditorField } from './field-editor';
 
 const INPUT = 'min-h-9 rounded-md border border-[#8a857d] bg-white px-2 text-sm text-[#1a1818]';
@@ -172,6 +173,58 @@ export function FieldSettings({ field, problem, names = [], onChange }: { field:
         Show only if (optional)
         <input id={id('showif')} maxLength={300} placeholder={'plan == "Yearly"'} defaultValue={o.show_if ?? ''} onBlur={(e) => set({ show_if: e.target.value.trim() || undefined })} className={`${INPUT} w-60 font-mono`} />
       </label>,
+    );
+  }
+  // D-80: a value filled in before sending, and whether the signer may change it
+  if (PREFILLABLE.includes(field.type)) {
+    const choices = o.choices ?? [];
+    rows.push(
+      <div key="prefill" className="flex flex-wrap items-end gap-3">
+        {field.type === 'checkbox' ? (
+          <label className="flex items-center gap-2 text-sm text-[#1a1818]">
+            <input type="checkbox" checked={o.prefill === 'true'} onChange={(e) => set({ prefill: e.target.checked ? 'true' : undefined, readonly: e.target.checked ? o.readonly : undefined })} className="size-4 accent-[#1a1818]" />
+            Ticked before sending
+          </label>
+        ) : field.type === 'radio' || field.type === 'dropdown' ? (
+          <label htmlFor={id('prefill')} className={LABEL}>
+            Chosen before sending (optional)
+            <select id={id('prefill')} value={o.prefill ?? ''} onChange={(e) => set({ prefill: e.target.value || undefined, readonly: e.target.value ? o.readonly : undefined })} className={INPUT}>
+              <option value="">Nothing chosen</option>
+              {choices.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label htmlFor={id('prefill')} className={LABEL}>
+            Filled in before sending (optional)
+            <input
+              id={id('prefill')}
+              maxLength={500}
+              placeholder={field.type === 'number' ? 'e.g. 1200' : 'e.g. {{name}} or Acme Ltd'}
+              defaultValue={o.prefill ?? ''}
+              onBlur={(e) => set({ prefill: e.target.value.trim() || undefined, readonly: e.target.value.trim() ? o.readonly : undefined })}
+              className={`${INPUT} w-64`}
+            />
+          </label>
+        )}
+        {o.prefill ? (
+          <label className="flex items-center gap-2 text-sm text-[#1a1818]">
+            <input type="checkbox" checked={o.readonly === true} onChange={(e) => set({ readonly: e.target.checked || undefined })} className="size-4 accent-[#1a1818]" />
+            The signer cannot change it
+          </label>
+        ) : null}
+      </div>,
+    );
+  }
+  if (field.type === 'note' || ((field.type === 'text' || field.type === 'company' || field.type === 'title') && o.prefill)) {
+    rows.push(
+      <p key="mergehelp" className="basis-full text-sm text-[#373330]">
+        Merge text, filled in for each person when you send:{' '}
+        <span className="font-mono">{MERGE_FIELDS.map((f) => `{{${f}}}`).join(' ')}</span> ({MERGE_FIELDS.map((f) => MERGE_LABEL[f]).join(', ')}).
+      </p>,
     );
   }
   if (field.type === 'formula' || o.show_if || o.name) {
