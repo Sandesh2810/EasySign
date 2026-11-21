@@ -16,15 +16,26 @@ import { Finalising } from './finalising';
 import { AccessCodeForm, EmailCodeForm } from './gate-form';
 import { SigningRoom, type RoomField } from './signing-room';
 import { HostPinForm, InPersonGuard } from './in-person';
+import { BrandBand } from '@/components/brand-band';
+import { loadBrand } from '@/lib/branding-store';
 
 export const metadata: Metadata = { title: 'Sign document' };
 
 export default function SignPage() {
   return (
     <Suspense fallback={<Message title="Loading your document…" body="This takes a moment." />}>
+      <SessionBrand />
       <Sign />
     </Suspense>
   );
+}
+
+/** D-88: the sending workspace's branding above every signer view (not on the identity-check screen). */
+async function SessionBrand() {
+  const ctx = await loadSignerContext({ allowUnverified: true, allowLocked: true });
+  if (!ctx || ctx.gate) return null;
+  const brand = await loadBrand(ctx.envelope.org_id);
+  return brand ? <BrandBand brand={brand} /> : null;
 }
 
 function Message({ title, body, children }: { title: string; body: string; children?: React.ReactNode }) {

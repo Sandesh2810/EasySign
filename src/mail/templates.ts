@@ -27,10 +27,11 @@ function layout(opts: { preheader: string; heading: string; paragraphs: string[]
 <div style="display:none;max-height:0;overflow:hidden;">${esc(opts.preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f4ef;"><tr><td align="center" style="padding:32px 16px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:24px;"><tr><td style="padding:36px 32px;">
-<p style="margin:0 0 24px;font-size:14px;letter-spacing:0.02em;color:#5e5a55;">${esc(PRODUCT_NAME)}</p>
+<!--brand:header--><p style="margin:0 0 24px;font-size:14px;letter-spacing:0.02em;color:#5e5a55;">${esc(PRODUCT_NAME)}</p><!--/brand:header-->
 <h1 style="margin:0 0 20px;font-size:26px;line-height:32px;font-weight:400;color:#1a1818;">${esc(opts.heading)}</h1>
 ${p}${button}
 ${opts.footnote ? `<p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #e3e0d7;font-size:13px;line-height:20px;color:#5e5a55;">${opts.footnote}</p>` : ''}
+<!--brand:footer-->
 </td></tr></table>
 </td></tr></table></body></html>`;
 }
@@ -319,4 +320,39 @@ export function senderTaskTemplate(v: { name: string; title: string; by: string;
     }),
     text: [`Hello ${v.name},`, '', what, ...(note ? [note] : []), '', v.openUrl].join('\n'),
   };
+}
+
+/** D-88: a workspace's branding, applied to an email for one of its documents. */
+export interface EmailBrand {
+  name: string;
+  color: string;
+  textColor: string;
+  footer: string | null;
+}
+
+const BUTTON_STYLE = 'background:#1a1818;color:#fffcf4;';
+const COLOR = /^#[0-9A-Fa-f]{6}$/;
+
+/**
+ * Puts the workspace's name on a band in its brand colours at the top (with "Sent with YouNMeSign" under it), gives the
+ * button the brand colours (the pair passed the contrast check when it was saved), and adds the footer to the HTML and
+ * the plain text. Everything from the workspace is escaped; colours that are not "#RRGGBB" are ignored.
+ */
+export function brandEmail(email: RenderedEmail, brand: EmailBrand | null): RenderedEmail {
+  if (!brand || !COLOR.test(brand.color) || !COLOR.test(brand.textColor)) return email;
+  const name = oneLine(brand.name) || PRODUCT_NAME;
+  const header =
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;"><tr><td style="background:${brand.color};color:${brand.textColor};padding:12px 16px;border-radius:12px;font-size:16px;line-height:22px;font-weight:600;">${esc(name)}</td></tr></table>` +
+    `<p style="margin:0 0 24px;font-size:12px;line-height:18px;color:#5e5a55;">Sent with ${esc(PRODUCT_NAME)}</p>`;
+  const footer = brand.footer?.trim()
+    ? `<p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #e3e0d7;font-size:13px;line-height:20px;color:#5e5a55;white-space:pre-line;">${esc(brand.footer.trim())}</p>`
+    : '';
+  const html = email.html
+    .replace(/<!--brand:header-->[\s\S]*?<!--\/brand:header-->/, header)
+    .split(BUTTON_STYLE)
+    .join(`background:${brand.color};color:${brand.textColor};`)
+    .replace('<!--brand:footer-->', footer);
+  const footerText = brand.footer?.trim() ? `\n\n--\n${brand.footer.trim()}` : '';
+  const text = `${name} (sent with ${PRODUCT_NAME})\n\n${email.text}${footerText}`;
+  return { subject: email.subject, html, text };
 }

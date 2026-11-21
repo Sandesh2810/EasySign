@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { activeWorkspace } from '@/lib/workspace';
 import { RetentionForm } from './retention-form';
 import { ExportSection } from './export-section';
+import { BrandingForm } from './branding-form';
 
 export const metadata: Metadata = { title: 'Settings' };
 
@@ -14,12 +15,28 @@ async function Settings({ searchParams }: { searchParams: Promise<Record<string,
   // settings of the workspace in use (owner-only parts are greyed out for everyone else)
   const { current: ws } = await activeWorkspace(user.id);
   const { data: controls } = await supabaseAdmin().from('org_controls').select('retention_years').eq('org_id', ws.orgId).maybeSingle();
+  const { data: brand } = await supabaseAdmin().from('org_branding').select('brand_color, text_on_brand, email_footer, logo_sha256').eq('org_id', ws.orgId).maybeSingle();
   return (
     <>
     <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="retention-heading">
       <p className="text-sm text-ink-muted">{ws.name}</p>
       <h2 id="retention-heading" className="mb-3 mt-1 text-base font-medium text-ink">How long finished documents are kept</h2>
       <RetentionForm orgId={ws.orgId} years={Number(controls?.retention_years ?? 7)} owner={ws.role === 'owner'} />
+    </section>
+    <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="branding-heading">
+      <p className="text-sm text-ink-muted">{ws.name}</p>
+      <h2 id="branding-heading" className="mb-1 mt-1 text-base font-medium text-ink">Branding</h2>
+      <p className="mb-4 text-sm text-ink-muted">Your logo, name and colour appear above the signing page and at the top of emails about this workspace&apos;s documents; the footer at the end of those emails. The signing area itself stays plain and high-contrast.</p>
+      <BrandingForm
+        orgId={ws.orgId}
+        workspaceName={ws.name}
+        canEdit={ws.role === 'owner' || ws.role === 'admin'}
+        initial={
+          brand
+            ? { color: brand.brand_color as string, text: brand.text_on_brand as 'light' | 'dark', footer: (brand.email_footer as string | null) ?? '', logoUrl: brand.logo_sha256 ? `/api/brand/${ws.orgId}/logo?v=${(brand.logo_sha256 as string).slice(0, 16)}` : null, saved: true }
+            : { color: '#2F5D50', text: 'light', footer: '', logoUrl: null, saved: false }
+        }
+      />
     </section>
     <ExportSection owner={ws.role === 'owner'} note={typeof exportNote === 'string' ? exportNote : null} />
     </>

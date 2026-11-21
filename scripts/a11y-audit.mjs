@@ -149,6 +149,8 @@ async function prepare() {
     { row_no: 2, name: '', email: 'a11y-bulk2@example.test' },
     { row_no: 3, name: 'Cy Example', email: 'a11y-bulk3@example.test', values: { qty_0: 'many' } },
   ] });
+  // Phase 4 slice 12 (D-88): the workspace has branding, so every signer page is audited with the brand band on it
+  await rpc(db, 'set_org_branding', { p_actor: sender.id, p_org: orgId, p_color: '#2F5D50', p_text: 'light', p_footer: 'Accessibility check footer' });
   // Phase 4 slice 11 (D-87): a public form on the one-person template
   const formSlug = randomBytes(16).toString('base64url');
   await rpc(db, 'create_power_form', { p_actor: sender.id, p_template_id: bulkTemplateId, p_title: 'Accessibility check form', p_daily_limit: 5, p_email_check: false, p_slug: formSlug });

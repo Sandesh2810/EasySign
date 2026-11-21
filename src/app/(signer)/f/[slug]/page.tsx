@@ -5,6 +5,8 @@ import { env } from '@/lib/env';
 import { formToken, SLUG } from '@/lib/power-form';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { PublicForm } from './public-form';
+import { BrandBand } from '@/components/brand-band';
+import { loadBrand } from '@/lib/branding-store';
 
 export const metadata: Metadata = { title: 'Fill in and sign', robots: { index: false, follow: false } };
 
@@ -31,7 +33,12 @@ async function FormView({ params }: { params: Promise<{ slug: string }> }) {
       </div>
     );
   }
+  // D-88: the workspace's branding above the form
+  const { data: owner } = await supabaseAdmin().from('power_forms').select('org_id').eq('slug', slug).maybeSingle();
+  const brand = owner ? await loadBrand(owner.org_id as string) : null;
   return (
+    <>
+    {brand ? <BrandBand brand={brand} /> : null}
     <div className="mx-auto max-w-xl px-4 py-12">
       <p className="text-sm text-ink-muted">
         From {form.owner_name}
@@ -47,5 +54,6 @@ async function FormView({ params }: { params: Promise<{ slug: string }> }) {
         Only use this form if you know {form.owner_name}. Do not send money or passwords because of a form like this.
       </p>
     </div>
+    </>
   );
 }

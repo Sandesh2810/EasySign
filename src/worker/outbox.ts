@@ -3,12 +3,13 @@
 // Outbox rows never contain a signing link: the link is derived here, in memory, at send time (D-21).
 import { env } from '@/lib/env';
 import { loadBudget } from '@/lib/email-budget-state';
+import { loadBrand } from '@/lib/branding-store';
 import { describeNotification } from '@/lib/notifications';
 import { hashOtp, otpForOutboxRow } from '@/lib/signer-token';
 import { byteaToBuffer, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getMailProvider } from '@/mail';
-import { commentReplyTemplate, completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, otpTemplate, senderTaskTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
+import { brandEmail, commentReplyTemplate, completionTemplate, declinedTemplate, digestTemplate, expiredTemplate, otpTemplate, senderTaskTemplate, signatureRequestTemplate, voidedTemplate, type RequestPurpose } from '@/mail/templates';
 import { drainOutbox, type OutboxDeps, type OutboxRow, type Prepared } from './dispatch';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
@@ -76,7 +77,16 @@ async function prepareOtp(row: OutboxRow): Promise<Prepared> {
 }
 
 /** Builds the email for one outbox row (also used by `npm run outbox:preview`, which sends nothing). */
+/** D-88: every email about a workspace's document carries that workspace's branding, when it has some. */
 export async function prepare(row: OutboxRow): Promise<Prepared> {
+  const prepared = await prepareUnbranded(row);
+  if (!row.envelope_id) return prepared;
+  const { data: env2 } = await supabaseAdmin().from('envelopes').select('org_id').eq('id', row.envelope_id).maybeSingle();
+  const brand = env2 ? await loadBrand(env2.org_id as string) : null;
+  return brand ? { ...prepared, email: brandEmail(prepared.email, { name: brand.name, color: brand.color, textColor: brand.textColor, footer: brand.footer }) } : prepared;
+}
+
+async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
   const db = supabaseAdmin();
   if (row.kind === 'digest') return prepareDigest(row);
   if (row.kind === 'otp') return prepareOtp(row);

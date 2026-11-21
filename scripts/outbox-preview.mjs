@@ -32,7 +32,7 @@ try {
   const raw = await previewOutboxRow(id);
   // a signing link works like a key: hidden unless asked for
   const hide = (s) => (process.argv.includes('--show-links') ? s : s.replace(/\/s#[A-Za-z0-9_-]+/g, '/s#[link hidden: add --show-links]'));
-  const p = { ...raw, text: hide(raw.text) };
+  const p = { ...raw, text: hide(raw.text), html: hide(raw.html) };
   if (asJson) console.log(JSON.stringify(p));
   else console.log(`To: ${p.to}\nSubject: ${p.subject}\n\n${p.text}`);
 } catch (e) {
