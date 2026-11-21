@@ -6,6 +6,7 @@ import { activeWorkspace } from '@/lib/workspace';
 import { RetentionForm } from './retention-form';
 import { ExportSection } from './export-section';
 import { BrandingForm } from './branding-form';
+import { ApiKeys, type ApiKeyRow } from './api-keys';
 
 export const metadata: Metadata = { title: 'Settings' };
 
@@ -15,6 +16,7 @@ async function Settings({ searchParams }: { searchParams: Promise<Record<string,
   // settings of the workspace in use (owner-only parts are greyed out for everyone else)
   const { current: ws } = await activeWorkspace(user.id);
   const { data: controls } = await supabaseAdmin().from('org_controls').select('retention_years').eq('org_id', ws.orgId).maybeSingle();
+  const { data: apiKeys } = ws.role === 'owner' || ws.role === 'admin' ? await supabaseAdmin().rpc('api_key_list', { p_actor: user.id, p_org: ws.orgId }) : { data: [] };
   const { data: brand } = await supabaseAdmin().from('org_branding').select('brand_color, text_on_brand, email_footer, logo_sha256').eq('org_id', ws.orgId).maybeSingle();
   return (
     <>
@@ -38,6 +40,14 @@ async function Settings({ searchParams }: { searchParams: Promise<Record<string,
         }
       />
     </section>
+    {ws.role === 'owner' || ws.role === 'admin' ? (
+      <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="api-heading">
+        <p className="text-sm text-ink-muted">{ws.name}</p>
+        <h2 id="api-heading" className="mb-1 mt-1 text-base font-medium text-ink">API keys</h2>
+        <p className="mb-4 text-sm text-ink-muted">For connecting another system. A key acts as the person who made it, with their permissions and daily limits, and stops working if they leave the workspace. Keep keys secret like passwords.</p>
+        <ApiKeys orgId={ws.orgId} keys={(apiKeys ?? []) as ApiKeyRow[]} />
+      </section>
+    ) : null}
     <ExportSection owner={ws.role === 'owner'} note={typeof exportNote === 'string' ? exportNote : null} />
     </>
   );
