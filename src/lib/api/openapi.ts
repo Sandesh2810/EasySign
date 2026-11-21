@@ -72,7 +72,7 @@ export function openApiDocument(serverUrl: string): Json {
     info: {
       title: 'YouNMeSign API',
       version: '1.0.0',
-      description: `Create documents from templates, send them, follow their progress and download the signed copies. Authenticate with an API key made in Settings → API keys, sent as "Authorization: Bearer <key>". A key acts as the person who made it. At most ${API_RATE.limit} requests a minute per key.`,
+      description: `Create documents from templates, send them, follow their progress and download the signed copies. Authenticate with an API key made in Settings → API keys, sent as "Authorization: Bearer <key>". A key acts as the person who made it. On the free plan: at most ${API_RATE.limit} requests a minute per key and no monthly limit (a plan with a monthly limit answers 429 "monthly_limit" once it is reached).`,
     },
     servers: [{ url: `${serverUrl}/api/v1` }],
     security: [{ apiKey: [] }],

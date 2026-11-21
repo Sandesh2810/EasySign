@@ -8,6 +8,7 @@ import { RetentionForm } from './retention-form';
 import { ExportSection } from './export-section';
 import { BrandingForm } from './branding-form';
 import { ApiKeys, type ApiKeyRow } from './api-keys';
+import { monthInWords, usageLines, type Usage } from '@/lib/usage';
 
 export const metadata: Metadata = { title: 'Settings' };
 
@@ -18,9 +19,27 @@ async function Settings({ searchParams }: { searchParams: Promise<Record<string,
   const { current: ws } = await activeWorkspace(user.id);
   const { data: controls } = await supabaseAdmin().from('org_controls').select('retention_years').eq('org_id', ws.orgId).maybeSingle();
   const { data: apiKeys } = ws.role === 'owner' || ws.role === 'admin' ? await supabaseAdmin().rpc('api_key_list', { p_actor: user.id, p_org: ws.orgId }) : { data: [] };
+  const { data: usage } = ws.role === 'owner' || ws.role === 'admin' ? await supabaseAdmin().rpc('usage_summary', { p_actor: user.id, p_org: ws.orgId, p_month: null }) : { data: null };
   const { data: brand } = await supabaseAdmin().from('org_branding').select('brand_color, text_on_brand, email_footer, logo_sha256').eq('org_id', ws.orgId).maybeSingle();
   return (
     <>
+    {usage ? (
+      <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="usage-heading">
+        <p className="text-sm text-ink-muted">{ws.name}</p>
+        <h2 id="usage-heading" className="mb-1 mt-1 text-base font-medium text-ink">
+          Plan and usage: {(usage as Usage).plan.name} plan, {monthInWords((usage as Usage).month)}
+        </h2>
+        <p className="mb-4 text-sm text-ink-muted">Documents, people and API requests count this month so far (UTC); the rest is as it is now. Each person&apos;s daily sending limits apply as well.</p>
+        <dl className="grid grid-cols-1 gap-x-6 sm:grid-cols-2" data-testid="usage">
+          {usageLines(usage as Usage).map((l) => (
+            <div key={l.label} className="flex justify-between gap-3 border-t border-hairline py-2">
+              <dt className="text-sm text-ink-body">{l.label}</dt>
+              <dd className="text-sm font-medium text-ink">{l.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+    ) : null}
     <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="retention-heading">
       <p className="text-sm text-ink-muted">{ws.name}</p>
       <h2 id="retention-heading" className="mb-3 mt-1 text-base font-medium text-ink">How long finished documents are kept</h2>

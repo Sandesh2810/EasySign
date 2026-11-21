@@ -14,7 +14,7 @@ export interface ApiContext {
 }
 
 export { API_RATE } from './limits';
-import { API_RATE } from './limits';
+import { API_RATE, secondsToNextMonth } from './limits';
 const BAD_KEY_RATE = { bucket: 'api_bad_key_ip', limit: 30, windowSeconds: 600 } as const;
 
 const HEADERS = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -37,13 +37,20 @@ export async function authenticate(request: Request, scope: ApiScope): Promise<{
   };
   if (!key) return refuse(401, 'unauthorized', 'Send your API key as "Authorization: Bearer ynms_…".');
   const { data } = await supabaseAdmin().rpc('api_key_resolve', { p_key_sha256: keySha256(key) });
-  const row = (Array.isArray(data) ? data[0] : null) as { key_id: string; org_id: string; user_id: string; scopes: ApiScope[]; role: ApiContext['role'] } | null;
+  const row = (Array.isArray(data) ? data[0] : null) as
+    | { key_id: string; org_id: string; user_id: string; scopes: ApiScope[]; role: ApiContext['role']; per_minute: number | null; month_limit: number | null; month_calls: number }
+    | null;
   if (!row) return refuse(401, 'unauthorized', 'This API key is not valid, was revoked, or its owner no longer has access.');
   if (!row.scopes.includes(scope)) return { response: apiError(403, 'forbidden', `This key may not do this: it needs the "${scope}" permission.`) };
   // a viewer may only read, whatever the key says
   if (row.role === 'viewer' && scope !== 'documents:read') return { response: apiError(403, 'forbidden', 'The person who made this key can only read documents.') };
-  if (!(await allow({ bucket: 'api_key', ...API_RATE }, row.key_id))) {
-    return { response: apiError(429, 'rate_limited', `Too many requests: at most ${API_RATE.limit} a minute per key.`, { 'Retry-After': String(retryAfterSeconds(API_RATE.windowSeconds)) }) };
+  // D-94: the workspace's plan sets the limits (free: 60 a minute per key, no monthly limit)
+  if (row.month_limit !== null && row.month_calls > row.month_limit) {
+    return { response: apiError(429, 'monthly_limit', `This workspace's plan allows ${row.month_limit} API requests a month; the count starts again on the 1st (UTC).`, { 'Retry-After': String(secondsToNextMonth()) }) };
+  }
+  const rate = { limit: row.per_minute ?? API_RATE.limit, windowSeconds: API_RATE.windowSeconds };
+  if (!(await allow({ bucket: 'api_key', ...rate }, row.key_id))) {
+    return { response: apiError(429, 'rate_limited', `Too many requests: at most ${rate.limit} a minute per key.`, { 'Retry-After': String(retryAfterSeconds(rate.windowSeconds)) }) };
   }
   return { ctx: { keyId: row.key_id, orgId: row.org_id, userId: row.user_id, role: row.role, scopes: row.scopes } };
 }

@@ -23,4 +23,4 @@ export const MAX_ATTEMPTS = RETRY_DELAYS_SECONDS.length + 1;
 export const DISABLE_AFTER_FAILED_DELIVERIES = 5;
 /** Receivers should refuse a request whose webhook-timestamp is further than this from their clock. */
 export const REPLAY_WINDOW_SECONDS = 300;
-export const MAX_ENDPOINTS = 10;
+// how many endpoints a workspace may have is set by its plan (public.plans, D-94)

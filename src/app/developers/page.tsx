@@ -63,7 +63,7 @@ export default function DevelopersPage() {
             <li>
               Make a key in <strong>Settings → API keys</strong> (workspace owners and administrators), choose what it may do, and send it as <code className="font-mono text-sm">Authorization: Bearer ynms_…</code>. A key acts as the person who made it.
             </li>
-            <li>At most {API_RATE.limit} requests a minute per key; above that the answer is 429 with a Retry-After header in seconds. The person&apos;s daily sending limits apply too.</li>
+            <li>On the free plan, at most {API_RATE.limit} requests a minute per key and no monthly limit; above a limit the answer is 429 with a Retry-After header in seconds. The person&apos;s daily sending limits apply too. Settings shows the workspace&apos;s plan and this month&apos;s usage.</li>
             <li>
               Writes accept an <code className="font-mono text-sm">Idempotency-Key</code> header: a retry with the same key and body within 24 hours gets the first answer, never a second document.
             </li>
