@@ -33,6 +33,7 @@
     "e2e:handoff": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/handoff-e2e.mjs",
     "outbox:preview": "node scripts/outbox-preview.mjs",
     "e2e:inperson": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/in-person-e2e.mjs",
+    "e2e:forms": "node scripts/power-forms-e2e.mjs",
     "e2e:bulk": "node scripts/bulk-e2e.mjs",
     "e2e:comments": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/comments-schedule-e2e.mjs"
   },

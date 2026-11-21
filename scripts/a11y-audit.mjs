@@ -149,6 +149,9 @@ async function prepare() {
     { row_no: 2, name: '', email: 'a11y-bulk2@example.test' },
     { row_no: 3, name: 'Cy Example', email: 'a11y-bulk3@example.test', values: { qty_0: 'many' } },
   ] });
+  // Phase 4 slice 11 (D-87): a public form on the one-person template
+  const formSlug = randomBytes(16).toString('base64url');
+  await rpc(db, 'create_power_form', { p_actor: sender.id, p_template_id: bulkTemplateId, p_title: 'Accessibility check form', p_daily_limit: 5, p_email_check: false, p_slug: formSlug });
   const sendWithLink = async (env) => {
     const tokenId = randomUUID();
     const nonce = newNonce();
@@ -178,7 +181,7 @@ async function prepare() {
   await rpc(db, 'save_recipients', { p_actor: sender.id, p_envelope_id: inPerson.id,
     p_recipients: [{ id: inPerson.recipients[0].id, name: 'Ines Inperson', email: 'a11y-inperson@example.test', role: 'in_person', routing_order: 1 }] });
   await sendWithLink(inPerson);
-  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId, inPersonId: inPerson.id };
+  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId, inPersonId: inPerson.id, formSlug };
 }
 
 /** Press Tab until the focused element's name matches, then press the key. Fails if it is never reached. */
@@ -332,7 +335,7 @@ async function main() {
 
     // ---- public pages ----
     say('Public pages');
-    for (const [label, p] of [['Sign in', '/login'], ['Create account', '/signup'], ['Check a document (/verify)', '/verify'], ['Join a team (no invitation in the link)', '/join']]) {
+    for (const [label, p] of [['Sign in', '/login'], ['Create account', '/signup'], ['Check a document (/verify)', '/verify'], ['Join a team (no invitation in the link)', '/join'], ['Public form (PowerForm)', `/f/${data.formSlug}`]]) {
       await page.goto(`${APP}${p}`, { waitUntil: 'networkidle0' });
       await axeCheck(page, label);
       await reflowCheck(page, label);
@@ -448,6 +451,7 @@ async function main() {
       ['Sender: team', '/app/team'],
       ['Sender: templates', '/app/templates'],
       ['Sender: a template (use and edit)', `/app/templates/${data.templateId}`],
+      ['Sender: a one-person template (public form section)', `/app/templates/${data.bulkTemplateId}`],
       ['Sender: bulk send (choose a file)', `/app/templates/${data.bulkTemplateId}/bulk`],
       ['Sender: a bulk batch (rows and reasons)', `/app/bulk/${data.batchId}`],
     ];

@@ -7,6 +7,8 @@ import { requireUser } from '@/lib/auth/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { FIELD_LABEL, type FieldType } from '@/lib/fields';
 import { DeleteTemplateForm, EditTemplateForm, UseTemplateForm } from '../template-forms';
+import { env } from '@/lib/env';
+import { PowerForms, type PowerFormRow } from './power-forms';
 
 export const metadata: Metadata = { title: 'Template' };
 
@@ -43,6 +45,8 @@ async function TemplateView({ params }: { params: Promise<{ id: string }> }) {
   if (error || !data) notFound();
   const t = data as Template;
   const roleLabel = new Map(t.roles.map((r) => [r.id, r.label]));
+  const { data: formData } = t.roles.length === 1 ? await supabaseAdmin().rpc('power_form_list', { p_actor: user.id, p_template_id: t.id }) : { data: [] };
+  const forms = (formData ?? []) as PowerFormRow[];
   return (
     <>
       <h1 className="text-2xl font-medium text-ink [overflow-wrap:anywhere]">{t.name}</h1>
@@ -64,6 +68,19 @@ async function TemplateView({ params }: { params: Promise<{ id: string }> }) {
           </p>
         ) : null}
       </section>
+
+      {t.roles.length === 1 && t.roles[0].role === 'signer' ? (
+        // D-87: public forms (PowerForms)
+        <section className="rounded-lg bg-surface p-6 shadow-soft" aria-labelledby="forms-heading">
+          <h2 id="forms-heading" className="mb-1 text-base font-medium text-ink">
+            Public form
+          </h2>
+          <p className="mb-4 text-sm text-ink-muted">
+            Share a link anyone can use: they enter their name and email, and get their own copy of this document to sign at once. Each one counts towards your daily sending limits.
+          </p>
+          <PowerForms templateId={t.id} templateName={t.name} appUrl={env.appUrl()} forms={forms} />
+        </section>
+      ) : null}
 
       {t.access === 'edit' ? (
         <>
