@@ -4,6 +4,7 @@ import { PRODUCT_NAME } from '@/config/brand';
 import { I18nProvider } from '@/i18n/client';
 import { messagesFor, signerI18n } from '@/i18n/server';
 import { LanguageMenu } from './language-menu';
+import { RegisterSignerApp } from './install';
 import { ReportAbuseFooter } from './report-abuse';
 
 // The signing surface is deliberately plain: white, high contrast, nothing decorative.
@@ -36,6 +37,7 @@ async function SignerShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
         <ReportAbuseFooter />
+        <RegisterSignerApp />
       </div>
     </I18nProvider>
   );

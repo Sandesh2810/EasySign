@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>No connection · YouNMeSign</title>
+</head>
+<!-- D-96: shown by public/sw.js when a signing page is opened without a connection. Static on purpose: no scripts and
+     only style attributes (the page's security policy allows those), so it works with nothing else loaded. It says the
+     same in every signing language; nothing about any document is stored on the device. -->
+<body style="margin:0;background:#ffffff;color:#1a1818;font-family:'Hanken Grotesk','Helvetica Neue',Arial,sans-serif;">
+<header style="border-bottom:1px solid #e3e0d7;padding:12px 16px;font-size:16px;font-weight:500;">YouNMeSign</header>
+<main id="main" style="max-width:36rem;margin:0 auto;padding:40px 16px;display:flex;flex-direction:column;gap:32px;">
+  <section lang="en">
+    <h1 style="margin:0 0 12px;font-size:26px;line-height:32px;font-weight:500;">You are offline</h1>
+    <p style="margin:0;font-size:16px;line-height:24px;color:#373330;">Signing needs an internet connection. Connect again, then open the link from your email. Nothing about your document is kept on this device.</p>
+  </section>
+  <section lang="es">
+    <h2 style="margin:0 0 12px;font-size:20px;line-height:28px;font-weight:500;">No tiene conexión</h2>
+    <p style="margin:0;font-size:16px;line-height:24px;color:#373330;">Para firmar se necesita conexión a internet. Vuelva a conectarse y abra el enlace de su correo. En este dispositivo no se guarda nada de su documento.</p>
+  </section>
+  <section lang="hi">
+    <h2 style="margin:0 0 12px;font-size:20px;line-height:28px;font-weight:500;">आप ऑफ़लाइन हैं</h2>
+    <p style="margin:0;font-size:16px;line-height:24px;color:#373330;">हस्ताक्षर करने के लिए इंटरनेट कनेक्शन ज़रूरी है। फिर से कनेक्ट करें, फिर अपने ईमेल का लिंक खोलें। आपके दस्तावेज़ की कोई भी जानकारी इस डिवाइस पर नहीं रखी जाती।</p>
+  </section>
+  <section lang="ar" dir="rtl">
+    <h2 style="margin:0 0 12px;font-size:20px;line-height:28px;font-weight:500;">أنت غير متصل بالإنترنت</h2>
+    <p style="margin:0;font-size:16px;line-height:24px;color:#373330;">يتطلب التوقيع اتصالًا بالإنترنت. أعد الاتصال، ثم افتح الرابط من بريدك الإلكتروني. لا يُحفظ أي شيء عن مستندك على هذا الجهاز.</p>
+  </section>
+</main>
+</body>
+</html>

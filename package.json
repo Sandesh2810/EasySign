@@ -43,6 +43,8 @@
     "e2e:reports": "node scripts/reports-e2e.mjs",
     "e2e:usage": "node scripts/usage-e2e.mjs",
     "e2e:languages": "node scripts/languages-e2e.mjs",
+    "e2e:pwa": "node scripts/pwa-e2e.mjs",
+    "icons": "node scripts/make-icons.mjs",
     "e2e:bulk": "node scripts/bulk-e2e.mjs",
     "e2e:comments": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/comments-schedule-e2e.mjs"
   },

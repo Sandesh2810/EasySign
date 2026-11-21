@@ -346,7 +346,7 @@ async function main() {
 
     // ---- public pages ----
     say('Public pages');
-    for (const [label, p] of [['Sign in', '/login'], ['Create account', '/signup'], ['Check a document (/verify)', '/verify'], ['Join a team (no invitation in the link)', '/join'], ['Public form (PowerForm)', `/f/${data.formSlug}`], ['API documentation (/developers)', '/developers']]) {
+    for (const [label, p] of [['Sign in', '/login'], ['Create account', '/signup'], ['Check a document (/verify)', '/verify'], ['Join a team (no invitation in the link)', '/join'], ['Public form (PowerForm)', `/f/${data.formSlug}`], ['API documentation (/developers)', '/developers'], ['Offline page for signers', '/offline.html']]) {
       await page.goto(`${APP}${p}`, { waitUntil: 'networkidle0' });
       await axeCheck(page, label);
       await reflowCheck(page, label);

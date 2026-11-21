@@ -25,6 +25,15 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // D-96: the signer app's service worker is always fetched fresh, so a change reaches every device at once
+        source: "/sw.js",
+        headers: [
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Content-Security-Policy", value: "default-src 'self'; script-src 'self'" },
+        ],
+      },
+      {
         // the public check page answers for a specific code: never kept by a browser or a shared cache
         source: "/verify",
         headers: [{ key: "Cache-Control", value: "no-store" }],
