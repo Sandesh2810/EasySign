@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createHmac, randomBytes } from 'node:crypto';
 import { newWebhookSecret, secretBytes, signature, signatureHeader, verifyWebhook } from './signature';
 import { openSecret, sealSecret } from './secret-box';
-import { checkWebhookUrl, isAllowedAddress, loopbackAllowed } from './url-guard';
+import { checkWebhookUrl, denyAddresses, isAllowedAddress, loopbackAllowed } from './url-guard';
 import { MAX_ATTEMPTS, RETRY_DELAYS_SECONDS } from './events';
 
 describe('signatures (Standard Webhooks v1)', () => {
@@ -114,6 +114,9 @@ describe('where events may be sent (no SSRF)', () => {
       ['https://[::ffff:10.0.0.1]/x', 'private'],
       ['https://2130706433/x', 'private'],
       ['https://0x7f.1/x', 'private'],
+      ['https://hooks.example.com:22/x', 'port'],
+      ['https://8.8.8.8:6379/x', 'port'],
+      ['https://hooks.example.com:80/x', 'port'],
       ['not a url', 'web address'],
       ['', 'Enter'],
     ] as const) {
@@ -130,10 +133,26 @@ describe('where events may be sent (no SSRF)', () => {
     expect(isAllowedAddress('127.0.0.1', { allowLoopback: true })).toBe(true);
     expect(isAllowedAddress('192.168.0.1', { allowLoopback: true })).toBe(false);
     expect(loopbackAllowed({ WEBHOOK_ALLOW_LOOPBACK: '1', APP_URL: 'http://localhost:3000' })).toBe(true);
-    expect(loopbackAllowed({ WEBHOOK_ALLOW_LOOPBACK: '1' })).toBe(true);
+    expect(loopbackAllowed({ WEBHOOK_ALLOW_LOOPBACK: '1' })).toBe(false);   // D-98: APP_URL must say so explicitly
     expect(loopbackAllowed({ WEBHOOK_ALLOW_LOOPBACK: '1', APP_URL: 'https://younmesign.com' })).toBe(false);
     expect(loopbackAllowed({ WEBHOOK_ALLOW_LOOPBACK: '1', APP_URL: 'http://localhost:3000', NODE_ENV: 'production' })).toBe(false);
     expect(loopbackAllowed({ APP_URL: 'http://localhost:3000' })).toBe(false);
+  });
+});
+
+describe("the server's own addresses (D-98)", () => {
+  it('reads WEBHOOK_DENY_IPS and ignores anything that is not an address', () => {
+    expect(denyAddresses({ WEBHOOK_DENY_IPS: ' 8.8.8.8, [2606:4700::1111],nonsense,' })).toEqual(['8.8.8.8', '2606:4700::1111']);
+    expect(denyAddresses({})).toEqual([]);
+  });
+  it('refuses a denied address in any spelling, and still allows others', () => {
+    const deny = ['8.8.8.8', '2606:4700::1111'];
+    expect(isAllowedAddress('8.8.8.8', { deny })).toBe(false);
+    expect(isAllowedAddress('::ffff:8.8.8.8', { deny })).toBe(false);
+    expect(isAllowedAddress('2606:4700:0:0:0:0:0:1111', { deny })).toBe(false);
+    expect(isAllowedAddress('8.8.4.4', { deny })).toBe(true);
+    expect(checkWebhookUrl('https://8.8.8.8/x', { deny }).ok).toBe(false);
+    expect(checkWebhookUrl('https://hooks.example.com:443/x').ok).toBe(true);
   });
 });
 

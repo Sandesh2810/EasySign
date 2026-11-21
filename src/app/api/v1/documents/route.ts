@@ -1,12 +1,13 @@
 // POST /api/v1/documents — D-90: a new draft from a template (needs documents:write). Accepts an Idempotency-Key.
-import { apiError, apiJson, authenticate, idempotent } from '@/lib/api/http';
+import { apiError, apiJson, authenticate, idempotent, readBody } from '@/lib/api/http';
 import { ApiFailure, createFromTemplate, createInput } from '@/lib/api/documents';
 
 export async function POST(request: Request) {
   const auth = await authenticate(request, 'documents:write');
   if ('response' in auth) return auth.response;
-  const body = await request.text();
-  if (body.length > 64 * 1024) return apiError(413, 'too_large', 'The request body can be up to 64 KB.');
+  const read = await readBody(request, 64 * 1024);   // D-98: refused before reading when too big
+  if ('response' in read) return read.response;
+  const body = read.text;
   return idempotent(auth.ctx, request, '/api/v1/documents', body, async () => {
     let json: unknown;
     try {
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
     try {
       return apiJson(201, await createFromTemplate(auth.ctx, parsed.data));
     } catch (e) {
-      if (e instanceof ApiFailure) return apiError(e.status, e.code, e.message);
+      if (e instanceof ApiFailure) return apiError(e.status, e.code, e.message, e.headers);
       return apiError(500, 'server_error', 'Something went wrong. Try again.');
     }
   });

@@ -87,9 +87,10 @@ async function main() {
                        values ($1, 'E2E tight (test only)', false, 10, 10, 3, $2, 'Made by usage-e2e; removed at the end') on conflict (id) do update set api_requests_per_minute = 3, monthly_api_calls = $2`,
       [TEST_PLAN, now.api_calls + 5]);
     await owner.query('insert into public.org_plans (org_id, plan_id) values ($1, $2) on conflict (org_id) do update set plan_id = $2', [org, TEST_PLAN]);
-    // per minute: start early in a clock minute so all four land in the same one
+    // per minute: start at the beginning of a fresh clock minute, so all four land in the same one and the five
+    // requests made above (same key) are not in it (they can share a minute when the earlier steps run fast)
     const into = (Date.now() / 1000) % 60;
-    if (into > 40) await new Promise((r) => setTimeout(r, (61 - into) * 1000));
+    await new Promise((r) => setTimeout(r, (61 - into) * 1000));
     const minute = [];
     for (let i = 0; i < 4; i++) minute.push(await call(key));
     check('the per-minute limit comes from the plan: 3 allowed, the 4th refused with 429 and Retry-After',

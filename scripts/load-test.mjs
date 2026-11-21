@@ -11,7 +11,11 @@
 //   * Afterwards the emails this run queued (completion copies) are marked not sent, so they never use the daily email
 //     allowance.
 // Safety: it refuses any address other than this PC unless --approved-by "<name, date>" is given (the server is shared
-// with another app; a run there needs Sandesh's go-ahead and a quiet time, RUNBOOK "Load test").
+// with another app; a run there needs Sandesh's go-ahead and a quiet time, RUNBOOK "Load test"). D-98: it also refuses
+// to run with real email switched on (NOTIFY_MODE other than "log") without --approved-by; while it runs, the emails
+// its workspace queues are marked not sent every few seconds; and whatever happens (even a crash) it cancels the
+// documents still open, marks the emails not sent and puts the test account's limits back as they were. The signers'
+// addresses are on example.test, a name reserved for testing that can never receive email (RFC 2606).
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -66,6 +70,7 @@ async function timed(url) {
 async function main() {
   const local = isLocalTarget(APP);
   if (!local && !APPROVED) throw new Error(`Refusing to load-test ${APP}: it is not this PC. A run on the server needs Sandesh's go-ahead; pass --approved-by "<name, date>" (RUNBOOK "Load test").`);
+  if ((process.env.NOTIFY_MODE ?? 'log') !== 'log' && !APPROVED) throw new Error('Refusing to load-test with real email switched on (NOTIFY_MODE is not "log"). Switch it to "log", or pass --approved-by "<name, date>" (RUNBOOK "Load test").');
   if (!CHROME) throw new Error('Google Chrome (or Microsoft Edge) is not installed in the usual place.');
   if (!(await fetch(`${APP}/login`).then((r) => r.ok).catch(() => false))) throw new Error(`The app is not running at ${APP}.`);
   mkdirSync(OUT, { recursive: true });
@@ -75,9 +80,39 @@ async function main() {
   const list = await db.auth.admin.listUsers({ page: 1, perPage: 500 });
   let u = list.data?.users.find((x) => x.email === OWNER.email);
   if (!u) u = (await db.auth.admin.createUser({ email: OWNER.email, password: randomBytes(24).toString('base64url'), email_confirm: true, user_metadata: { full_name: OWNER.name } })).data.user;
+  // the test account's limits as they were, put back at the end
+  const controlsBefore = (await db.from('account_controls').select('approved, trust_level, daily_envelope_cap, daily_recipient_cap').eq('user_id', u.id).single()).data;
   await db.from('account_controls').update({ approved: true, trust_level: 'trusted', daily_envelope_cap: 10000, daily_recipient_cap: 10000 }).eq('user_id', u.id);
   const org = (await db.from('memberships').select('org_id').eq('user_id', u.id).eq('role', 'owner').single()).data.org_id;
 
+  const envelopeIds = [];
+  let browser = null;
+  let sampling = false;
+  let sampler = Promise.resolve();
+  let markedNotSent = 0;
+  /** Every email this workspace has waiting is marked not sent (all of them come from load tests). */
+  const suppress = async () => {
+    const { data } = await db.from('notification_outbox').update({ status: 'dead', last_error: 'load test: not sent' }).eq('org_id', org).in('status', ['queued', 'deferred', 'failed']).select('id');
+    markedNotSent += data?.length ?? 0;
+  };
+  let cleaned = false;
+  /** Runs once: at the normal end, or from "finally" after a crash. */
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    sampling = false;
+    await sampler.catch(() => undefined);
+    if (browser) await browser.close().catch(() => undefined);
+    // documents a failed signer (or a crash) left open are cancelled, so they never expire into emails later
+    const open = envelopeIds.length ? ((await db.from('envelopes').select('id, status').in('id', envelopeIds)).data ?? []) : [];
+    for (const e of open.filter((x) => !['completed', 'failed_sealing'].includes(x.status))) {
+      await db.rpc('void_envelope', { p_actor: u.id, p_envelope_id: e.id, p_reason: 'Load test ended' });
+    }
+    await suppress();
+    if (controlsBefore) await db.from('account_controls').update(controlsBefore).eq('user_id', u.id);
+  };
+
+  try {
   // ---------- the documents ----------
   const tokenKey = process.env.SIGNER_TOKEN_KEY;
   const pdf = await PDFDocument.create();
@@ -85,7 +120,6 @@ async function main() {
   const bytes = await pdf.save();
   const sha = createHash('sha256').update(bytes).digest('hex');
   const links = [];
-  const envelopeIds = [];
   const counts = spread(SIGNERS, DOCUMENTS);
   const setupStart = performance.now();
   for (const [d, n] of counts.entries()) {
@@ -114,8 +148,8 @@ async function main() {
   // ---------- background measurements ----------
   const samples = { watch: [], app: [], queue: [] };
   let phase = 'before';
-  let sampling = true;
-  const sampler = (async () => {
+  sampling = true;
+  sampler = (async () => {
     while (sampling) {
       const [w, a, q] = await Promise.all([
         WATCH ? timed(WATCH) : Promise.resolve(null),
@@ -127,6 +161,7 @@ async function main() {
       if (w) samples.watch.push({ phase, ...w });
       samples.app.push({ phase, ...a });
       samples.queue.push({ phase, at: now, due });
+      await suppress();   // D-98: emails from this run are marked not sent as soon as they appear
       await sleep(3000);
     }
   })();
@@ -134,7 +169,7 @@ async function main() {
 
   // ---------- the signers ----------
   phase = 'during';
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 600_000, args: ['--no-first-run', '--disable-gpu'] });
+  browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 600_000, args: ['--no-first-run', '--disable-gpu'] });
   const steps = { open: [], agree: [], sign: [], total: [] };
   const failures = [];
   let serverErrors = 0;
@@ -199,6 +234,7 @@ async function main() {
   };
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   await browser.close();
+  browser = null;
   const runSeconds = (performance.now() - runStart) / 1000;
   log(`all signers finished in ${Math.round(runSeconds)} s; waiting for sealing`);
 
@@ -219,15 +255,8 @@ async function main() {
   const lastSigned = Math.max(...[...lastSignature.values()]);
   phase = 'after';
   await sleep(10_000);
-  sampling = false;
-  await sampler;
-
-  // ---------- documents a failed signer left open are cancelled, so they never expire into emails later ----------
-  for (const e of envs.filter((x) => !['completed', 'failed_sealing'].includes(x.status))) {
-    await db.rpc('void_envelope', { p_actor: u.id, p_envelope_id: e.id, p_reason: 'Load test ended' });
-  }
-  // ---------- emails this run queued: never sent ----------
-  const { data: queued } = await db.from('notification_outbox').update({ status: 'dead', last_error: 'load test: not sent' }).eq('org_id', org).in('status', ['queued', 'deferred', 'failed']).select('id');
+  // ---------- clean up: open documents cancelled, emails marked not sent, the account's limits put back ----------
+  await cleanup();
 
   // ---------- the report ----------
   const by = (list, ph) => stats(list.filter((s) => s.phase === ph).map((s) => s.ms));
@@ -246,7 +275,7 @@ async function main() {
       afterLastSignature: stats(sealWaits),
       allSealedSecondsAfterLastSignature: Number.isFinite(allSealedAt) && Number.isFinite(lastSigned) ? Math.round((allSealedAt - lastSigned) / 1000) : null,
     },
-    emailQueue: { maxDue: Math.max(0, ...samples.queue.map((q) => q.due)), dueAtEnd: samples.queue.at(-1)?.due ?? null, markedNotSent: queued?.length ?? 0 },
+    emailQueue: { maxDue: Math.max(0, ...samples.queue.map((q) => q.due)), dueAtEnd: samples.queue.at(-1)?.due ?? null, markedNotSent },
     thisAppSignIn: { before: by(samples.app, 'before'), during: by(samples.app, 'during'), sealing: by(samples.app, 'sealing'), after: by(samples.app, 'after'), errorsDuring: errorsBy(samples.app, 'during') },
     watched: WATCH ? { url: WATCH, before: by(samples.watch, 'before'), during: by(samples.watch, 'during'), after: by(samples.watch, 'after'), errorsDuring: errorsBy(samples.watch, 'during') } : null,
   };
@@ -275,12 +304,18 @@ async function main() {
   console.log(`\n${md}`);
   const ok = report.signers.failed === 0 && serverErrors === 0 && report.sealing.completed === envelopeIds.length;
   console.log(ok ? `LOAD TEST COMPLETED: every signer signed and every document sealed. Report: ${jsonPath}` : `LOAD TEST FOUND PROBLEMS (see the report): ${jsonPath}`);
-  process.exit(ok ? 0 : 1);
+  return ok;
+  } finally {
+    await cleanup().catch((e) => console.error(`load test clean-up failed: ${e instanceof Error ? e.message : String(e)}`));
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  main().catch((e) => {
-    console.error(`LOAD TEST could not run: ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(1);
-  });
+  main().then(
+    (ok) => process.exit(ok ? 0 : 1),
+    (e) => {
+      console.error(`LOAD TEST could not run: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    },
+  );
 }

@@ -22,5 +22,5 @@ export function rich(t: T, key: MessageKey, nodes: Record<string, ReactNode>, va
   const marked = Object.fromEntries(Object.keys(nodes).map((k) => [k, `\u0000${k}\u0000`]));
   return t(key, { ...vars, ...marked })
     .split('\u0000')
-    .map((part, i) => (i % 2 === 1 && part in nodes ? <Fragment key={i}>{nodes[part]}</Fragment> : part));
+    .map((part, i) => (i % 2 === 1 && Object.hasOwn(nodes, part) ? <Fragment key={i}>{nodes[part]}</Fragment> : part));
 }

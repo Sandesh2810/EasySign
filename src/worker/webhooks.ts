@@ -7,7 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { postWebhook, type DeliveryResult } from '@/lib/webhooks/deliver';
 import { openSecret } from '@/lib/webhooks/secret-box';
 import { signatureHeader } from '@/lib/webhooks/signature';
-import { loopbackAllowed } from '@/lib/webhooks/url-guard';
+import { denyAddresses, loopbackAllowed, type GuardOptions } from '@/lib/webhooks/url-guard';
 
 interface Claimed {
   id: string;
@@ -28,7 +28,7 @@ const origin = (url: string) => {
   }
 };
 
-async function deliverOne(row: Claimed, allowLoopback: boolean): Promise<DeliveryResult> {
+async function deliverOne(row: Claimed, guard: GuardOptions): Promise<DeliveryResult> {
   let secrets: string[];
   try {
     secrets = [openSecret(row.secret_enc, row.endpoint_id, env.storageKey())];
@@ -48,7 +48,7 @@ async function deliverOne(row: Claimed, allowLoopback: boolean): Promise<Deliver
       'webhook-timestamp': String(timestamp),
       'webhook-signature': signatureHeader(secrets, row.id, timestamp, body),
     },
-    { allowLoopback },
+    guard,
   );
 }
 
@@ -59,16 +59,24 @@ export async function runWebhooks(log: (msg: string) => void): Promise<number> {
   if (error) throw new Error(`webhook_claim: ${error.message}`);
   const rows = (data ?? []) as Claimed[];
   if (rows.length === 0) return 0;
-  const allowLoopback = loopbackAllowed(process.env);
+  // D-98: the server's own public addresses (WEBHOOK_DENY_IPS) are refused like private ones
+  const guard: GuardOptions = { allowLoopback: loopbackAllowed(process.env), deny: denyAddresses(process.env) };
   await Promise.all(
     rows.map(async (row) => {
-      const r = await deliverOne(row, allowLoopback);
+      const r = await deliverOne(row, guard);
       const res = await db.rpc('webhook_result', { p_delivery: row.id, p_ok: r.ok, p_status_code: r.statusCode, p_error: r.error, p_duration_ms: r.durationMs });
       if (res.error) throw new Error(`webhook_result: ${res.error.message}`);
       log(`webhook ${row.event_type} to ${origin(row.url)}: attempt ${row.attempts + 1} ${r.ok ? `delivered (HTTP ${r.statusCode})` : `failed (${r.error})`} -> ${String(res.data)}`);
     }),
   );
   return rows.length;
+}
+
+/** D-98: stored API answers are kept for their 24-hour replay window only. */
+export async function pruneIdempotency(log: (msg: string) => void): Promise<void> {
+  const { data, error } = await supabaseAdmin().rpc('api_idem_prune', {});
+  if (error) throw new Error(`api_idem_prune: ${error.message}`);
+  if (typeof data === 'number' && data > 0) log(`api: ${data} stored answer${data === 1 ? '' : 's'} older than 24 hours removed`);
 }
 
 /** Keep the delivery log for 30 days. */

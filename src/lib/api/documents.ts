@@ -8,9 +8,12 @@ import { sendProblems, toLogicFields } from '@/lib/form-logic';
 import { byteaToBuffer, mintTokenRecord, signingLink } from '@/lib/signing/links';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { draftFromTemplate, TemplateUseError } from '@/lib/template-use';
+import { allow } from '@/lib/rate-limit';
 import { getStorageFor } from '@/storage';
 import type { Backend } from '@/storage/types';
 import type { ApiContext } from './http';
+import { retryAfterSeconds } from './keys';
+import { API_CREATE_DAILY, API_DOWNLOAD_HOURLY } from './limits';
 
 export { createInput, sendInput };
 
@@ -19,6 +22,7 @@ export class ApiFailure extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly headers: Record<string, string> = {},
   ) {
     super(message);
   }
@@ -30,6 +34,12 @@ function fromDb(message: string | undefined): ApiFailure {
   if (f.code === 'ES_NOT_FOUND' || f.code === 'ES_ERROR') return new ApiFailure(f.code === 'ES_ERROR' ? 500 : 404, f.code === 'ES_ERROR' ? 'server_error' : 'not_found', f.message);
   if (f.code === 'ES_ENVELOPE_CAP' || f.code === 'ES_RECIPIENT_CAP') return new ApiFailure(429, 'daily_limit', f.message);
   return new ApiFailure(422, f.code.replace(/^ES_/, '').toLowerCase(), f.message);
+}
+
+/** D-98: what a key did to a document goes in that document's audit trail, naming the key. */
+async function auditApi(ctx: ApiContext, id: string, action: 'created_from_template' | 'sent'): Promise<void> {
+  const { error } = await supabaseAdmin().rpc('api_audit', { p_key_id: ctx.keyId, p_envelope_id: id, p_action: action });
+  if (error) console.error('[api] audit record failed', error.message);
 }
 
 export async function viewDocument(ctx: ApiContext, id: string): Promise<Record<string, unknown>> {
@@ -55,6 +65,9 @@ export async function listTemplates(ctx: ApiContext): Promise<unknown[]> {
 /** A new draft from a template; each person names a role by its id or its label. */
 export async function createFromTemplate(ctx: ApiContext, input: z.infer<typeof createInput>): Promise<Record<string, unknown>> {
   const admin = supabaseAdmin();
+  if (!(await allow(API_CREATE_DAILY, ctx.userId))) {
+    throw new ApiFailure(429, 'daily_limit', `At most ${API_CREATE_DAILY.limit} documents a day can be created through the API per person.`, { 'Retry-After': String(retryAfterSeconds(API_CREATE_DAILY.windowSeconds)) });
+  }
   const { data: tpl, error } = await admin.rpc('template_get', { p_actor: ctx.userId, p_template_id: input.template_id });
   const t = tpl as { name: string; org_id: string; roles: { id: string; label: string }[] } | null;
   // a key works only in its own workspace, even if its creator also belongs to another one
@@ -71,6 +84,7 @@ export async function createFromTemplate(ctx: ApiContext, input: z.infer<typeof 
     if (e instanceof TemplateUseError) throw new ApiFailure(422, 'cannot_create', e.message);
     throw e;
   }
+  await auditApi(ctx, id, 'created_from_template');
   return viewDocument(ctx, id);
 }
 
@@ -92,24 +106,48 @@ export async function sendDocument(ctx: ApiContext, id: string, input: z.infer<t
   const expires = new Date(Date.now() + input.expires_in_days * 86400_000).toISOString();
   const sent = await admin.rpc('send_envelope', { p_actor: ctx.userId, p_envelope_id: id, p_tokens: tokens, p_expires_at: expires, p_delivery: input.delivery });
   if (sent.error) throw fromDb(sent.error.message);
+  await auditApi(ctx, id, 'sent');
   const doc = await viewDocument(ctx, id);
   if (input.delivery !== 'link') return { document: doc };
-  const { data: links, error } = await admin.rpc('reveal_signing_links', { p_actor: ctx.userId, p_envelope_id: id });
+  return { document: doc, signing_links: await signingLinks(ctx, id) };
+}
+
+/** Each person's signing link of an open document, made fresh from the database (links are never stored). */
+export async function signingLinks(ctx: ApiContext, id: string): Promise<{ name: string; role: string; order: number; url: string }[]> {
+  const { data: links, error } = await supabaseAdmin().rpc('reveal_signing_links', { p_actor: ctx.userId, p_envelope_id: id });
   if (error) throw fromDb(error.message);
-  return {
-    document: doc,
-    signing_links: ((links ?? []) as { token_id: string; nonce_hex: string; recipient_name: string; recipient_role: string; recipient_order: number }[]).map((l) => ({
-      name: l.recipient_name,
-      role: l.recipient_role,
-      order: l.recipient_order,
-      url: signingLink(l.token_id, byteaToBuffer(l.nonce_hex)),
-    })),
-  };
+  return ((links ?? []) as { token_id: string; nonce_hex: string; recipient_name: string; recipient_role: string; recipient_order: number }[]).map((l) => ({
+    name: l.recipient_name,
+    role: l.recipient_role,
+    order: l.recipient_order,
+    url: signingLink(l.token_id, byteaToBuffer(l.nonce_hex)),
+  }));
+}
+
+/**
+ * D-98: a send answer is stored for replay without its signing links (they work like keys); a replay of it gets the
+ * links again from the database while the document is still open for signing, and an empty list once it is not.
+ */
+export function sendAnswerToStore(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || !('signing_links' in body)) return body;
+  const rest: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+  delete rest.signing_links;
+  return { ...rest, signing_links_redacted: true };
+}
+export async function sendAnswerReplay(ctx: ApiContext, id: string, stored: unknown): Promise<unknown> {
+  if (!stored || typeof stored !== 'object' || !('signing_links_redacted' in stored)) return stored;
+  const rest: Record<string, unknown> = { ...(stored as Record<string, unknown>) };
+  delete rest.signing_links_redacted;
+  const links = await signingLinks(ctx, id).catch(() => []);
+  return { ...rest, signing_links: links };
 }
 
 /** The sealed PDF or its certificate of a completed document. */
 export async function downloadDocument(ctx: ApiContext, id: string, part: 'sealed' | 'certificate'): Promise<{ bytes: Uint8Array; filename: string }> {
   const view = await viewDocument(ctx, id);
+  if (!(await allow(API_DOWNLOAD_HOURLY, ctx.keyId))) {
+    throw new ApiFailure(429, 'rate_limited', `At most ${API_DOWNLOAD_HOURLY.limit} downloads an hour per key.`, { 'Retry-After': String(retryAfterSeconds(API_DOWNLOAD_HOURLY.windowSeconds)) });
+  }
   const { data: env } = await supabaseAdmin().from('envelopes').select('title, status, sealed_storage_backend, sealed_storage_path, certificate_storage_path').eq('id', id).single();
   if (!env || env.status !== 'completed' || !env.sealed_storage_path || !env.certificate_storage_path) {
     throw new ApiFailure(409, 'not_completed', `The document is not completed yet (status: ${String(view.status)}).`);

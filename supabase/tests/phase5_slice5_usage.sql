@@ -16,6 +16,8 @@ begin
   select m.org_id into org_a from public.memberships m where m.user_id = a and m.role = 'owner';
   select m.org_id into org_o from public.memberships m where m.user_id = oth and m.role = 'owner';
   insert into public.memberships (org_id, user_id, role) values (org_a, mem, 'member');
+  -- D-98: only approved accounts make API keys and webhook endpoints
+  update public.account_controls set approved = true where user_id in (a, mem, oth);
 
   -- T761: plans are data; a workspace with no plan set is on "free" (10 keys, 10 endpoints, 60 a minute, no monthly
   -- limit); the placeholder is not offered; plans cannot be changed by the server or reached from the browser

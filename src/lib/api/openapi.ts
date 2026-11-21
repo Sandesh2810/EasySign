@@ -1,7 +1,7 @@
 // D-91: the OpenAPI 3.1 description of the REST API, generated from the same Zod schemas the routes and the contract
 // test use. Pure: no I/O.
 import { z } from 'zod';
-import { API_RATE } from './limits';
+import { API_CREATE_DAILY, API_DOWNLOAD_HOURLY, API_RATE } from './limits';
 import './schemas'; // registers the named schemas (CreateDocument, Document, …) in Zod's registry
 
 type Json = Record<string, unknown>;
@@ -72,7 +72,7 @@ export function openApiDocument(serverUrl: string): Json {
     info: {
       title: 'YouNMeSign API',
       version: '1.0.0',
-      description: `Create documents from templates, send them, follow their progress and download the signed copies. Authenticate with an API key made in Settings → API keys, sent as "Authorization: Bearer <key>". A key acts as the person who made it. On the free plan: at most ${API_RATE.limit} requests a minute per key and no monthly limit (a plan with a monthly limit answers 429 "monthly_limit" once it is reached).`,
+      description: `Create documents from templates, send them, follow their progress and download the signed copies. Authenticate with an API key made in Settings → API keys, sent as "Authorization: Bearer <key>". A key acts as the person who made it. On the free plan: at most ${API_RATE.limit} requests a minute per key and no monthly limit (a plan with a monthly limit answers 429 "monthly_limit" once it is reached). Also at most ${API_CREATE_DAILY.limit} new documents a day per person and ${API_DOWNLOAD_HOURLY.limit} downloads an hour per key. Signing links are never stored: repeating a send with the same Idempotency-Key fetches them again while the document is open for signing.`,
     },
     servers: [{ url: `${serverUrl}/api/v1` }],
     security: [{ apiKey: [] }],

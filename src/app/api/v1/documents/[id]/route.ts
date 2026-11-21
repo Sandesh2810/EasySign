@@ -11,7 +11,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   try {
     return apiJson(200, await viewDocument(auth.ctx, id.data));
   } catch (e) {
-    if (e instanceof ApiFailure) return apiError(e.status, e.code, e.message);
+    if (e instanceof ApiFailure) return apiError(e.status, e.code, e.message, e.headers);
     return apiError(500, 'server_error', 'Something went wrong. Try again.');
   }
 }

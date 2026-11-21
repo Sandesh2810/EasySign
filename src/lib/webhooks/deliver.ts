@@ -81,6 +81,7 @@ export function postWebhook(rawUrl: string, body: string, headers: Record<string
         });
         res.on('end', close);
         res.on('error', close);
+        res.on('close', close);   // D-98: a connection dropped mid-answer still finishes the attempt
       },
     );
     const timer = setTimeout(() => request.destroy(Object.assign(new Error('timeout'), { code: 'ES_TIMEOUT' })), timeoutMs);

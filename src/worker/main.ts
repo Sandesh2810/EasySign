@@ -8,7 +8,7 @@ import { runOutbox } from './outbox';
 import { runOneSealJob } from './seal-job';
 import { archiveDue, ARCHIVE_AFTER_DAYS } from './audit-archive';
 import { runBulk } from './bulk';
-import { pruneWebhooks, runWebhooks } from './webhooks';
+import { pruneIdempotency, pruneWebhooks, runWebhooks } from './webhooks';
 
 const once = process.argv.includes('--once');
 // --archive-now [days] [document id]: archive the audit trails of documents finished at least [days] ago
@@ -54,30 +54,49 @@ async function runDue(): Promise<boolean> {
 const ARCHIVE_EVERY_MS = 6 * 3600_000;
 let lastArchive = 0;
 
-async function tick(): Promise<boolean> {
+async function tick(withWebhooks: boolean): Promise<boolean> {
   let busy = await runDue();
   if (Date.now() - lastArchive >= ARCHIVE_EVERY_MS) {
     lastArchive = Date.now();
     await archiveDue(log, ARCHIVE_AFTER_DAYS, 5);
     await pruneWebhooks(log);
+    await pruneIdempotency(log);
   }
   const seal = await runOneSealJob(log);
   if (seal !== 'none') busy = true;
   if ((await runOutbox(log)) > 0) busy = true;
   // D-85: a few bulk-send rows per pass (paced by the email allowance)
   if ((await runBulk(log)) > 0) busy = true;
-  // D-92: signed webhook deliveries (retries are scheduled by the database)
-  if ((await runWebhooks(log)) > 0) busy = true;
+  // D-92: signed webhook deliveries (retries are scheduled by the database). In loop mode they have their own loop
+  // (D-98), so slow receivers never hold up sealing or email; --once drains them here.
+  if (withWebhooks && (await runWebhooks(log)) > 0) busy = true;
   return busy;
+}
+
+/** D-98: webhooks on their own loop beside the main one (each delivery stops after 10 seconds at most). */
+async function webhookLoop(): Promise<void> {
+  let failures = 0;
+  while (!stopping) {
+    let busy = false;
+    try {
+      busy = (await runWebhooks(log)) > 0;
+      failures = 0;
+    } catch (e) {
+      failures++;
+      log(`webhook pass failed (${failures}): ${e instanceof Error ? e.message : 'unknown error'}`);
+    }
+    if (!stopping) await new Promise((r) => setTimeout(r, busy ? BUSY_MS : Math.min(IDLE_MS * 2 ** Math.min(failures, 4), 60_000)));
+  }
 }
 
 async function main() {
   log(`worker started (mode: ${once ? 'once' : 'loop'}, email: ${NOTIFY_MODE})`);
   let failures = 0;
+  const webhooks = once ? Promise.resolve() : webhookLoop();
   while (!stopping) {
     let busy = false;
     try {
-      busy = await tick();
+      busy = await tick(once);
       failures = 0;
     } catch (e) {
       failures++;
@@ -90,6 +109,8 @@ async function main() {
     if (once && !busy) break;
     if (!stopping) await new Promise((r) => setTimeout(r, busy ? BUSY_MS : Math.min(IDLE_MS * 2 ** Math.min(failures, 4), 60_000)));
   }
+  stopping = true;
+  await webhooks;
   log('worker stopped');
 }
 

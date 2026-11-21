@@ -1,15 +1,16 @@
 // POST /api/v1/documents/<id>/send — D-90: send a draft (needs documents:send). Accepts an Idempotency-Key.
 import { z } from 'zod';
-import { apiError, apiJson, authenticate, idempotent } from '@/lib/api/http';
-import { ApiFailure, sendDocument, sendInput } from '@/lib/api/documents';
+import { apiError, apiJson, authenticate, idempotent, readBody } from '@/lib/api/http';
+import { ApiFailure, sendAnswerReplay, sendAnswerToStore, sendDocument, sendInput } from '@/lib/api/documents';
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await authenticate(request, 'documents:send');
   if ('response' in auth) return auth.response;
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return apiError(404, 'not_found', 'Document not found.');
-  const body = await request.text();
-  if (body.length > 16 * 1024) return apiError(413, 'too_large', 'The request body can be up to 16 KB.');
+  const read = await readBody(request, 16 * 1024);   // D-98: refused before reading when too big
+  if ('response' in read) return read.response;
+  const body = read.text;
   return idempotent(auth.ctx, request, `/api/v1/documents/${id.data}/send`, body, async () => {
     let json: unknown;
     try {
@@ -22,8 +23,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     try {
       return apiJson(200, await sendDocument(auth.ctx, id.data, parsed.data));
     } catch (e) {
-      if (e instanceof ApiFailure) return apiError(e.status, e.code, e.message);
+      if (e instanceof ApiFailure) return apiError(e.status, e.code, e.message, e.headers);
       return apiError(500, 'server_error', 'Something went wrong. Try again.');
     }
+  }, {
+    // D-98: signing links are never stored; a replay gets them again from the database
+    store: sendAnswerToStore,
+    replay: (stored) => sendAnswerReplay(auth.ctx, id.data, stored),
   });
 }
