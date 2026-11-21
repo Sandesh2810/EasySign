@@ -3,6 +3,7 @@
 // write, so a slow worker that lost its lease cannot complete the envelope a second time.
 import { createHash } from 'node:crypto';
 import { env } from '@/lib/env';
+import { computeForm, toLogicFields } from '@/lib/form-logic';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { buildSealedPdf, type SealField, type SealInput, type SealRecipient } from '@/pdf/seal';
 import { loadSealKey, type SealKey } from '@/pdf/seal-key';
@@ -49,7 +50,11 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
   const recipientOf = new Map(recipients.map((r) => [r.id as string, r]));
   const images = new Map<string, Uint8Array>();
   const sealFields: SealField[] = [];
+  // D-79: conditions and calculations worked out from the final values (the same code the signer page and the server
+  // used). Hidden fields are left out of the signed copy; calculated fields print their value, rounded to their decimals.
+  const form = computeForm(toLogicFields(fields), (fieldId) => (valueOf.get(fieldId)?.value_text as string | null | undefined) ?? '');
   for (const f of fields) {
+    if (form.hidden.has(f.id as string)) continue;
     const v = valueOf.get(f.id as string);
     const rect = { x: Number(f.x), y: Number(f.y), w: Number(f.w), h: Number(f.h) };
     if (f.type === 'signature' || f.type === 'initials') {
@@ -69,6 +74,11 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
     } else if (f.type === 'note') {
       const text = String((f.options as { text?: string } | null)?.text ?? '').trim();
       if (text) sealFields.push({ page: f.page as number, rect, kind: 'note', text });
+    } else if (f.type === 'formula') {
+      const c = form.computed.get(f.id as string);
+      // completing is refused while a calculation fails, so this only happens if the rules changed after signing
+      if (!c?.ok) throw new Error(`a calculated field cannot be worked out: ${c && !c.ok ? c.error : 'no value'}`);
+      sealFields.push({ page: f.page as number, rect, kind: 'text', text: c.value });
     } else if (f.type === 'hyperlink') {
       const o = (f.options ?? {}) as { url?: string; label?: string };
       if (o.url) sealFields.push({ page: f.page as number, rect, kind: 'text', text: o.label ? `${o.label} (${o.url})` : o.url });

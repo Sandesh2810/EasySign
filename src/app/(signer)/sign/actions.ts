@@ -7,6 +7,7 @@ import { revalidatePath } from 'next/cache';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { CONSENT_VERSION, INTENT_TEXT } from '@/config/legal';
+import { computeForm, toLogicFields } from '@/lib/form-logic';
 import { allow, TOO_MANY } from '@/lib/rate-limit';
 import { friendlyDbError } from '@/lib/request-guard';
 import { consentOnFile } from '@/lib/signing/consent';
@@ -185,12 +186,26 @@ export async function completeAction(localDate: string): Promise<SignResult> {
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).safeParse(localDate);
   if (!date.success) return { ok: false, message: 'Your device reported an unusual date. Check its clock and try again.' };
   const { ip, ua } = await requestEvidence();
-  const { error } = await supabaseAdmin().rpc('signer_complete', {
+  // D-79: which of this signer's fields their conditions hide, worked out here from the stored values (never taken from
+  // the browser); a calculation that cannot be worked out stops signing rather than sealing a wrong total.
+  const admin = supabaseAdmin();
+  const [{ data: fieldRows }, { data: valueRows }] = await Promise.all([
+    admin.from('fields').select('id, type, page, recipient_id, options').eq('recipient_id', ctx.recipient.id),
+    admin.from('field_values').select('field_id, value_text').eq('recipient_id', ctx.recipient.id),
+  ]);
+  const stored = new Map((valueRows ?? []).map((v) => [v.field_id as string, (v.value_text as string | null) ?? '']));
+  const form = computeForm(toLogicFields(fieldRows), (fieldId) => stored.get(fieldId) ?? '');
+  const broken = [...form.computed.values()].find((c) => !c.ok);
+  if (broken && !broken.ok) {
+    return { ok: false, message: `A calculated amount cannot be worked out (${broken.error}). Check the numbers you entered; if they are right, contact the sender.` };
+  }
+  const { error } = await admin.rpc('signer_complete', {
     p_token_id: ctx.tokenId,
     p_intent_text_sha256: sha256Hex(INTENT_TEXT),
     p_local_date: date.data,
     p_ip: ip,
     p_user_agent: ua,
+    p_hidden: [...form.hidden],
   });
   if (error) return { ok: false, message: friendlyDbError(error.message).message };
   revalidatePath('/sign');

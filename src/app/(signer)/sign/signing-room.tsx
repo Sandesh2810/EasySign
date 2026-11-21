@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useRouter } from 'next/navigation';
 import { Button, Notice } from '@/components/ui';
 import { checkFieldValue, FIELD_LABEL, INFO_ONLY, TYPED_TYPES, type FieldOptions, type FieldType } from '@/lib/fields';
+import { computeForm } from '@/lib/form-logic';
 import { AttachmentField } from './attachment-field';
 import { approveAction, completeAction, fillFieldAction } from './actions';
 import { DeclineControl } from './decline';
@@ -75,6 +76,8 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
   const canvases = useRef<Array<HTMLCanvasElement | null>>([]);
   const pdfRef = useRef<PdfDoc | null>(null);
   const saved = useRef<Record<string, string>>(Object.fromEntries(fields.map((f) => [f.id, f.value])));
+  /** the last value sent for each field, saved or still on its way */
+  const sent = useRef<Record<string, string>>({});
   const targets = useRef<Record<string, HTMLElement | null>>({});
   const confirmDialog = useRef<HTMLDialogElement>(null);
   const today = useSyncExternalStore(noSubscribe, localDate, () => '');
@@ -154,16 +157,24 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
     },
     [images, values],
   );
+  // D-79: conditions and calculations, worked out again on every change (the server repeats this when signing)
+  const form = useMemo(
+    () => computeForm(fields.map((f) => ({ id: f.id, type: f.type, recipient_id: 'me', page: f.page, options: f.options ?? {} })), (id) => values[id] ?? ''),
+    [fields, values],
+  );
+  const shown = useMemo(() => fields.filter((f) => !form.hidden.has(f.id)), [fields, form]);
   const required = useMemo(
-    () => fields.filter((f) => !INFO_ONLY.includes(f.type) && (f.required || f.type === 'signature' || f.type === 'initials')),
-    [fields],
+    () => shown.filter((f) => !INFO_ONLY.includes(f.type) && (f.required || f.type === 'signature' || f.type === 'initials')),
+    [shown],
   );
   const remaining = useMemo(() => required.filter((f) => !isDone(f)), [required, isDone]);
   const doneCount = required.length - remaining.length;
 
   const saveValue = async (f: RoomField, override?: string) => {
     const value = (override ?? values[f.id] ?? '').trim();
-    if (saved.current[f.id] === value) return;
+    // Compare with the last value SENT, not the last one confirmed: saves run one after another, so a quick tick then
+    // untick must send both, or the stored value ends up differing from what the signer sees (found in slice 4).
+    if ((f.id in sent.current ? sent.current[f.id] : saved.current[f.id]) === value) return;
     // checked here first so the signer sees the sender's own message at once; the server checks it again
     const problem = checkFieldValue(f.type, f.options ?? {}, value);
     if (problem) {
@@ -171,7 +182,10 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
       setSaveError(`${FIELD_LABEL[f.type]}: ${problem}`);
       return;
     }
+    sent.current[f.id] = value;
     const res = await fillFieldAction(f.id, value).catch(() => ({ ok: false as const, message: 'We could not reach the server. Your last entry is not saved yet.' }));
+    // a failed save may be retried with the same value
+    if (!res.ok && sent.current[f.id] === value) delete sent.current[f.id];
     if (res.ok) {
       saved.current[f.id] = value;
       setSaveError(null);
@@ -312,7 +326,7 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                 role="img"
                 aria-label={`Page ${i + 1} of ${pages.length}`}
               />
-              {fields
+              {shown
                 .filter((f) => f.page === i + 1)
                 .map((f) => {
                   const box = { left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` };
@@ -413,6 +427,20 @@ export function SigningRoom({ title, senderLine, signer, fields, adopted, intent
                     return (
                       <div key={f.id} role="note" style={{ ...box, color: '#141414', fontSize: Math.min(fontSize, 12) }} className="absolute overflow-auto rounded-sm border border-[#5a5a5a] bg-white px-1 leading-snug">
                         {f.options?.text}
+                      </div>
+                    );
+                  }
+                  if (f.type === 'formula') {
+                    const c = form.computed.get(f.id);
+                    return (
+                      <div
+                        key={f.id}
+                        style={{ ...box, color: '#141414', fontSize }}
+                        className="absolute flex items-center justify-end overflow-hidden whitespace-nowrap rounded-sm border border-[#5a5a5a] bg-[#f3f3f3] px-1 tabular-nums"
+                        title={c && !c.ok ? `Cannot be worked out yet: ${c.error}` : 'Calculated for you from your entries'}
+                      >
+                        <span className="sr-only">Calculated{f.options?.name ? ` ${f.options.name.replace(/_/g, ' ')}` : ''}: </span>
+                        {c?.ok ? c.value : '—'}
                       </div>
                     );
                   }

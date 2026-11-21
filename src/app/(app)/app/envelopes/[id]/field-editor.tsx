@@ -3,8 +3,9 @@
 // fields. Positions are stored as fractions of the page as displayed (see src/lib/geometry.ts), so
 // they are independent of zoom and screen size. This is part of the neutral signing surface: plain
 // colours, no decoration.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clampRect, FIELD_DEFAULT_SIZE, FIELD_LABEL, FIELD_TYPES, fieldOptionsProblem, type FieldOptions, type FieldType } from '@/lib/fields';
+import { logicProblems } from '@/lib/form-logic';
 import { FieldSettings, defaultOptions } from './field-settings';
 import { saveFieldsAction } from '../actions';
 
@@ -58,6 +59,11 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fields, setFields] = useState<EditorField[]>(initialFields);
+  // D-79: problems across fields (names, references, circles), shown on the field they concern
+  const logic = useMemo(
+    () => logicProblems(fields.map((f) => ({ id: f.key, type: f.type, recipient_id: f.recipientId, page: f.page, options: f.options ?? {} }))),
+    [fields],
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [tool, setTool] = useState<FieldType | null>(null);
   const [save, setSave] = useState<SaveState>('saved');
@@ -204,7 +210,7 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
     const w = size.w / pages[pageIndex].width;
     const h = size.h / pages[pageIndex].height;
     const r = clampRect({ x: cx - w / 2, y: cy - h / 2, w, h });
-    const f: EditorField = { key: newKey(), recipientId: activeSigner, type: tool, page: pageIndex + 1, required: tool !== 'note' && tool !== 'hyperlink', options: defaultOptions(tool), ...r };
+    const f: EditorField = { key: newKey(), recipientId: activeSigner, type: tool, page: pageIndex + 1, required: tool !== 'note' && tool !== 'hyperlink' && tool !== 'formula', options: defaultOptions(tool), ...r };
     commit([...fields, f]);
     setSelected(f.key);
     setTool(null);
@@ -422,7 +428,8 @@ export function FieldEditor({ envelopeId, documentId, signers, initialFields, re
                   <FieldSettings
                     key={sel.key}
                     field={sel}
-                    problem={fieldOptionsProblem(sel.type, sel.options ?? {})}
+                    problem={fieldOptionsProblem(sel.type, sel.options ?? {}) ?? logic.find((p) => p.fieldId === sel.key)?.message ?? null}
+                    names={fields.filter((x) => x.recipientId === sel.recipientId && x.key !== sel.key && x.options?.name).map((x) => x.options!.name!)}
                     onChange={(patch) => commit(fields.map((x) => (x.key === sel.key ? { ...x, ...patch } : x)))}
                   />
                 </div>

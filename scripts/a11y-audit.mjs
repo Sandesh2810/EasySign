@@ -105,7 +105,10 @@ async function prepare() {
         { document_id: doc.id, recipient_id: r.id, type: 'checkbox', page: 1, x: 0.12, y: 0.12, w: 0.03, h: 0.022, required: false },
         { document_id: doc.id, recipient_id: r.id, type: 'radio', page: 1, x: 0.2, y: 0.12, w: 0.3, h: 0.08, required: false, options: { choices: ['Monthly', 'Yearly'] } },
         { document_id: doc.id, recipient_id: r.id, type: 'dropdown', page: 1, x: 0.55, y: 0.12, w: 0.3, h: 0.035, required: false, options: { choices: ['Red', 'Green'] } },
-        { document_id: doc.id, recipient_id: r.id, type: 'number', page: 1, x: 0.12, y: 0.24, w: 0.2, h: 0.035, required: false, options: { min: 0, max: 100 } },
+        { document_id: doc.id, recipient_id: r.id, type: 'number', page: 1, x: 0.12, y: 0.24, w: 0.2, h: 0.035, required: false, options: { min: 0, max: 100, name: `qty_${i}` } },
+        // Phase 4 slice 4 (D-79): a calculated field (shown) and a field with a condition (hidden until qty > 50)
+        { document_id: doc.id, recipient_id: r.id, type: 'formula', page: 1, x: 0.12, y: 0.38, w: 0.2, h: 0.035, required: false, options: { formula: `qty_${i} * 2.5` } },
+        { document_id: doc.id, recipient_id: r.id, type: 'text', page: 1, x: 0.4, y: 0.38, w: 0.3, h: 0.035, required: false, options: { show_if: `qty_${i} > 50` } },
         { document_id: doc.id, recipient_id: r.id, type: 'note', page: 1, x: 0.4, y: 0.24, w: 0.45, h: 0.05, options: { text: 'Please read the terms before signing.' } },
         { document_id: doc.id, recipient_id: r.id, type: 'hyperlink', page: 1, x: 0.12, y: 0.32, w: 0.3, h: 0.03, options: { url: 'https://example.com/terms', label: 'Our terms' } },
         { document_id: doc.id, recipient_id: r.id, type: 'attachment', page: 1, x: 0.5, y: 0.32, w: 0.35, h: 0.04, required: false },

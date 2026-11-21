@@ -32,7 +32,7 @@ begin
         n := n + 1; exception when invalid_parameter_value then null; end;
   begin perform public.save_fields(a, e1, jsonb_build_array(base || jsonb_build_object('type', 'note', 'x', 0.1, 'y', 0.1, 'options', jsonb_build_object('text', repeat('x', 5000)))));
         n := n + 1; exception when invalid_parameter_value then null; end;
-  begin perform public.save_fields(a, e1, jsonb_build_array(base || jsonb_build_object('type', 'formula', 'x', 0.1, 'y', 0.1)));
+  begin perform public.save_fields(a, e1, jsonb_build_array(base || jsonb_build_object('type', 'javascript', 'x', 0.1, 'y', 0.1)));
         n := n + 1; exception when check_violation then null; end;
   if n = 0 then res := res || E'PASS T621 field settings: unknown keys, oversized settings and unknown field types are refused on save\n';
   else res := res || 'FAIL T621 option shape :: n=' || n || E'\n'; end if;

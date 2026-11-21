@@ -6,6 +6,8 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { checkAccessCode, hashAccessCode } from '@/lib/access-code';
 import { fieldsSchema } from '@/lib/fields';
+import { sendProblems, toLogicFields } from '@/lib/form-logic';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { friendlyDbError } from '@/lib/request-guard';
 import { assignOrders, MAX_RECIPIENTS, validateRouting } from '@/lib/routing';
 import { mintTokenRecord, signingLink } from '@/lib/signing/links';
@@ -130,6 +132,13 @@ export async function sendEnvelopeAction(_prev: ActionResult | null, formData: F
   const id = z.uuid().safeParse(formData.get('envelope_id'));
   const delivery = z.enum(['email', 'link']).safeParse(formData.get('delivery'));
   if (!id.success || !delivery.success) return { ok: false, message: 'That request was not understood. Reload the page and try again.' };
+
+  // D-79: formulas and conditions are checked here in full (the database checks only their shape). Read with the
+  // user's own session, so nothing is learnt about a document they may not see.
+  const userDb = await createSupabaseServerClient();
+  const { data: fieldRows } = await userDb.from('fields').select('id, type, page, recipient_id, options').eq('envelope_id', id.data).order('page').order('y').order('x');
+  const notReady = sendProblems(toLogicFields(fieldRows));
+  if (notReady.length) return { ok: false, message: `Not ready to send. ${notReady[0]}${notReady.length > 1 ? ` (and ${notReady.length - 1} more: see the field editor)` : ''}` };
 
   const admin = supabaseAdmin();
   // The recipient ids are only used to prepare link records; send_envelope itself verifies that this

@@ -1,10 +1,13 @@
 // Field definitions shared by the editor (browser) and the server actions. No server-only imports here.
 import { z } from 'zod';
+import { ExprError, parse } from './expr';
 
 export const FIELD_TYPES = [
   'signature', 'initials', 'date_signed', 'name', 'email', 'company', 'title', 'text',
   // Phase 4 slice 3 (D-78)
   'checkbox', 'radio', 'dropdown', 'number', 'note', 'hyperlink', 'attachment',
+  // Phase 4 slice 4 (D-79)
+  'formula',
 ] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
@@ -24,6 +27,7 @@ export const FIELD_LABEL: Record<FieldType, string> = {
   note: 'Note',
   hyperlink: 'Link',
   attachment: 'Attachment',
+  formula: 'Calculated',
 };
 
 /** Default size in PDF points (1/72 inch) when a field is first placed. */
@@ -43,10 +47,11 @@ export const FIELD_DEFAULT_SIZE: Record<FieldType, { w: number; h: number }> = {
   note: { w: 230, h: 48 },
   hyperlink: { w: 170, h: 20 },
   attachment: { w: 200, h: 28 },
+  formula: { w: 130, h: 24 },
 };
 
 /** Shown to the signer, never filled in and never required. */
-export const INFO_ONLY: readonly FieldType[] = ['note', 'hyperlink'];
+export const INFO_ONLY: readonly FieldType[] = ['note', 'hyperlink', 'formula'];
 /** Filled in by typing (on a phone, through the large entry box). */
 export const TYPED_TYPES: readonly FieldType[] = ['company', 'title', 'text', 'number'];
 
@@ -80,13 +85,28 @@ export const fieldOptionsSchema = z
     check: z.enum(TEXT_CHECKS).optional(),
     pattern: z.string().max(100).optional(),
     message: z.string().max(120).optional(),
+    // D-79: a name other fields' formulas and conditions use; a calculation; a condition for showing the field
+    name: z.string().max(31).optional(),
+    formula: z.string().max(300).optional(),
+    show_if: z.string().max(300).optional(),
   })
   .strict();
 export type FieldOptions = z.infer<typeof fieldOptionsSchema>;
 
 /** Why a field cannot be sent as it is set up, or null. Checked again by the database when the document is sent. */
 export function fieldOptionsProblem(type: FieldType, o: FieldOptions = {}): string | null {
+  if (o.name !== undefined && !NAME_PATTERN.test(o.name)) return 'A name starts with a small letter and uses only small letters, digits and _ (up to 31).';
+  if (o.name !== undefined && !NAMEABLE.includes(type)) return 'Only fields the signer fills in, or calculated fields, can have a name.';
+  if (o.show_if !== undefined) {
+    if (type === 'signature' || type === 'initials') return 'Signatures and initials are always shown; they cannot have a condition.';
+    const p = exprProblem(o.show_if);
+    if (p) return `Condition: ${p}`;
+  }
   switch (type) {
+    case 'formula': {
+      const p = exprProblem(o.formula ?? '');
+      return p ? `Formula: ${p}` : null;
+    }
     case 'radio':
     case 'dropdown': {
       const c = (o.choices ?? []).map((s) => s.trim()).filter(Boolean);
@@ -150,6 +170,21 @@ export function checkFieldValue(type: FieldType, o: FieldOptions, raw: string): 
     }
     default:
       return null;
+  }
+}
+
+/** Field names: lower case, start with a letter (the formula language is case-insensitive and lower-cases names). */
+export const NAME_PATTERN = /^[a-z][a-z0-9_]{0,30}$/;
+/** Fields whose value a formula or condition can use (and so can carry a name). */
+export const NAMEABLE: readonly FieldType[] = ['text', 'company', 'title', 'number', 'checkbox', 'radio', 'dropdown', 'formula'];
+
+function exprProblem(src: string): string | null {
+  try {
+    parse(src);
+    return null;
+  } catch (e) {
+    if (e instanceof ExprError) return e.message;
+    throw e;
   }
 }
 

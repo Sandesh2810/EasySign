@@ -3,7 +3,7 @@
 // note text, link, and the check for typed text. Inputs save when you leave them (not on every key press), so undo
 // stays useful. The database checks the same settings again when the document is sent.
 import { type ReactNode } from 'react';
-import { FIELD_LABEL, INFO_ONLY, TEXT_CHECKS, type FieldOptions, type FieldType, type TextCheck } from '@/lib/fields';
+import { FIELD_LABEL, INFO_ONLY, NAMEABLE, TEXT_CHECKS, type FieldOptions, type FieldType, type TextCheck } from '@/lib/fields';
 import type { EditorField } from './field-editor';
 
 const INPUT = 'min-h-9 rounded-md border border-[#8a857d] bg-white px-2 text-sm text-[#1a1818]';
@@ -30,7 +30,7 @@ function clean(o: FieldOptions): FieldOptions {
   return out;
 }
 
-export function FieldSettings({ field, problem, onChange }: { field: EditorField; problem: string | null; onChange: (patch: Partial<EditorField>) => void }) {
+export function FieldSettings({ field, problem, names = [], onChange }: { field: EditorField; problem: string | null; names?: string[]; onChange: (patch: Partial<EditorField>) => void }) {
   const o = field.options ?? {};
   const set = (patch: FieldOptions) => onChange({ options: clean({ ...o, ...patch }) });
   const num = (s: string) => (s.trim() === '' || !Number.isFinite(Number(s)) ? undefined : Number(s));
@@ -130,6 +130,56 @@ export function FieldSettings({ field, problem, onChange }: { field: EditorField
           </label>
         ) : null}
       </div>,
+    );
+  }
+  // D-79: name, formula, condition
+  if (field.type === 'formula') {
+    rows.push(
+      <div key="formula" className="flex flex-wrap gap-3">
+        <label htmlFor={id('formula')} className={LABEL}>
+          Formula, using field names
+          <input id={id('formula')} maxLength={300} placeholder="qty * unit_price" defaultValue={o.formula ?? ''} onBlur={(e) => set({ formula: e.target.value.trim() })} className={`${INPUT} w-72 font-mono`} />
+        </label>
+        <label htmlFor={id('fdec')} className={LABEL}>
+          Decimal places
+          <select id={id('fdec')} value={o.decimals ?? 2} onChange={(e) => set({ decimals: Number(e.target.value) })} className={INPUT}>
+            <option value={0}>0</option>
+            <option value={1}>1</option>
+            <option value={2}>2 (cents)</option>
+          </select>
+        </label>
+      </div>,
+    );
+  }
+  if (NAMEABLE.includes(field.type)) {
+    rows.push(
+      <label key="name" htmlFor={id('name')} className={LABEL}>
+        Name for formulas (optional)
+        <input
+          id={id('name')}
+          maxLength={31}
+          placeholder="e.g. qty"
+          defaultValue={o.name ?? ''}
+          onBlur={(e) => set({ name: e.target.value.trim().toLowerCase().replace(/\s+/g, '_') || undefined })}
+          className={`${INPUT} w-40 font-mono`}
+        />
+      </label>,
+    );
+  }
+  if (field.type !== 'signature' && field.type !== 'initials') {
+    rows.push(
+      <label key="showif" htmlFor={id('showif')} className={LABEL}>
+        Show only if (optional)
+        <input id={id('showif')} maxLength={300} placeholder={'plan == "Yearly"'} defaultValue={o.show_if ?? ''} onBlur={(e) => set({ show_if: e.target.value.trim() || undefined })} className={`${INPUT} w-60 font-mono`} />
+      </label>,
+    );
+  }
+  if (field.type === 'formula' || o.show_if || o.name) {
+    rows.push(
+      <p key="exprhelp" className="basis-full text-sm text-[#373330]">
+        Use + − * / and brackets, comparisons (== != &lt; &gt; &lt;= &gt;=), and, or, not, and round(x, 2), min, max, abs, if(test, a, b). Text goes in quotes. Only this signer&apos;s fields can be used.{' '}
+        {names.length ? <>Names you can use: <span className="font-mono">{names.join(', ')}</span>.</> : 'Give other fields of this signer a name to use them here.'}
+      </p>,
     );
   }
   if (field.type === 'attachment') {
