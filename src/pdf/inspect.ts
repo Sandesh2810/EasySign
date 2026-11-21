@@ -2,6 +2,7 @@
 // Decides whether a file may be stored and signed, and returns the page geometry the editor needs.
 // Server-only. Never modifies the bytes it is given.
 import { createHash } from 'node:crypto';
+import { inflateSync } from 'node:zlib';
 import { PDFDocument, PDFDict, PDFArray, PDFName, PDFStream, PDFRef, type PDFObject } from 'pdf-lib';
 import { LIMITS } from '@/config/brand';
 import { normaliseBox, type PageBox } from '@/lib/geometry';
@@ -15,7 +16,8 @@ export type InspectCode =
   | 'ACTIVE_CONTENT'
   | 'EMBEDDED_FILES'
   | 'ALREADY_SIGNED'
-  | 'FORM_FIELDS';
+  | 'FORM_FIELDS'
+  | 'TOO_COMPLEX';
 
 export type InspectResult =
   | { ok: true; pageCount: number; sizeBytes: number; sha256: string; pages: PageBox[]; linkCount: number }
@@ -31,6 +33,7 @@ const MESSAGES: Record<InspectCode, string> = {
   EMBEDDED_FILES: 'This PDF has other files attached inside it, which is not allowed. Remove the attachments and upload it again.',
   ALREADY_SIGNED: 'This PDF already carries a digital signature. Stamping it would invalidate that signature, so it cannot be used here.',
   FORM_FIELDS: 'This PDF contains fillable form fields, which are not supported yet. Print it to a new PDF (flatten it) and upload that.',
+  TOO_COMPLEX: 'This PDF is too complex to check safely (it unpacks to far more data than its size suggests). Print it to a new PDF and upload that.',
 };
 
 const fail = (code: InspectCode): InspectResult => ({ ok: false, code, message: MESSAGES[code] });
@@ -38,6 +41,48 @@ const fail = (code: InspectCode): InspectResult => ({ ok: false, code, message: 
 const BANNED_ACTIONS = new Set(['JavaScript', 'Launch', 'ImportData', 'SubmitForm', 'ResetForm', 'GoToR', 'GoToE', 'Rendition', 'Movie', 'Sound', 'Hide', 'SetOCGState', 'Trans', 'GoTo3DView', 'RichMediaExecute']);
 
 const nameOf = (o: PDFObject | undefined): string | null => (o instanceof PDFName ? o.decodeText() : null);
+
+/** D-89 F4: limits on what the compressed streams of an uploaded PDF may unpack to, checked before parsing. */
+export const INFLATE_LIMITS = { perStream: 64 * 1024 * 1024, total: 256 * 1024 * 1024 } as const;
+
+/**
+ * Unpacks every compressed stream of the file once, with a hard cap, before the PDF library parses it (the library
+ * unpacks object streams in full while it reads). A stream that would pass `perStream`, or a total that would pass
+ * `total`, makes the file too complex to accept. Streams that are not zlib data (images and the like) are skipped.
+ */
+export function inflatesWithinLimits(bytes: Uint8Array, limits: { perStream: number; total: number } = INFLATE_LIMITS): boolean {
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let total = 0;
+  let from = 0;
+  for (;;) {
+    const at = buf.indexOf('stream', from, 'latin1');
+    if (at < 0) return true;
+    // "stream" followed by CRLF or LF starts a stream; "endstream" ends it
+    let start = at + 6;
+    if (buf[at - 3] === 0x65 && buf.toString('latin1', at - 3, at) === 'end') {
+      from = start;
+      continue;
+    }
+    if (buf[start] === 0x0d && buf[start + 1] === 0x0a) start += 2;
+    else if (buf[start] === 0x0a) start += 1;
+    else {
+      from = start;
+      continue;
+    }
+    const end = buf.indexOf('endstream', start, 'latin1');
+    if (end < 0) return true;
+    from = end + 9;
+    const data = buf.subarray(start, end);
+    if (data.length < 2 || data[0] !== 0x78) continue; // not zlib data
+    try {
+      total += inflateSync(data, { maxOutputLength: limits.perStream }).length;
+    } catch (e) {
+      if (e instanceof RangeError || (e as { code?: string })?.code === 'ERR_BUFFER_TOO_LARGE') return false;
+      continue; // damaged or not deflate: the PDF library decides about those
+    }
+    if (total > limits.total) return false;
+  }
+}
 
 function hasPdfHeader(bytes: Uint8Array): boolean {
   const head = Buffer.from(bytes.subarray(0, 1024)).toString('latin1');
@@ -52,6 +97,7 @@ export interface InspectOptions {
 export async function inspectPdf(bytes: Uint8Array, opts: InspectOptions = {}): Promise<InspectResult> {
   if (!bytes || bytes.length < 8 || !hasPdfHeader(bytes)) return fail('NOT_PDF');
   if (bytes.length > LIMITS.maxDocumentBytes) return fail('FILE_TOO_LARGE');
+  if (!inflatesWithinLimits(bytes)) return fail('TOO_COMPLEX');
 
   let doc: PDFDocument;
   try {
@@ -71,27 +117,46 @@ export async function inspectPdf(bytes: Uint8Array, opts: InspectOptions = {}): 
     const found = { active: false, embedded: false, signed: false };
     let linkCount = 0;
 
-    /** An action that only moves the view inside this document. */
-    const isNavigationOnly = (o: PDFObject | undefined): boolean => {
+    /** An action that only moves the view inside this document (a chain longer than 100 steps counts as not). */
+    const isNavigationOnly = (o: PDFObject | undefined, steps = 0): boolean => {
+      if (steps > 100) return false;
       const v = resolve(o);
       if (v === undefined) return true;
       if (v instanceof PDFArray) return true; // explicit destination
       if (v instanceof PDFName) return true; // named destination
-      if (v instanceof PDFDict) return nameOf(resolve(v.get(PDFName.of('S')))) === 'GoTo' && isNavigationOnly(v.get(PDFName.of('Next')));
+      if (v instanceof PDFDict) return nameOf(resolve(v.get(PDFName.of('S')))) === 'GoTo' && isNavigationOnly(v.get(PDFName.of('Next')), steps + 1);
       return false;
     };
 
-    const visit = (o: PDFObject | undefined, depth: number): void => {
-      if (depth > 12 || o === undefined) return;
-      if (o instanceof PDFArray) {
-        for (let i = 0; i < o.size(); i++) {
-          const child = o.get(i);
-          if (!(child instanceof PDFRef)) visit(child, depth + 1);
+    // D-89 F5: every object is looked at, however deeply it is nested (an explicit stack instead of recursion with a
+    // depth limit). Indirect objects are each visited from the enumeration below, so references are not followed here
+    // and there are no cycles; the budget only stops a file built to make the walk endless.
+    let budget = 2_000_000;
+    let tooBig = false;
+    const visit = (root: PDFObject | undefined): void => {
+      const stack: (PDFObject | undefined)[] = [root];
+      while (stack.length) {
+        if (--budget < 0) {
+          tooBig = true;
+          return;
         }
-        return;
+        const o = stack.pop();
+        if (o === undefined) continue;
+        if (o instanceof PDFArray) {
+          for (let i = 0; i < o.size(); i++) {
+            const child = o.get(i);
+            if (!(child instanceof PDFRef)) stack.push(child);
+          }
+          continue;
+        }
+        const dict = o instanceof PDFDict ? o : o instanceof PDFStream ? o.dict : null;
+        if (!dict) continue;
+        inspectDict(dict);
+        for (const [, v] of dict.entries()) if (!(v instanceof PDFRef)) stack.push(v);
       }
-      const dict = o instanceof PDFDict ? o : o instanceof PDFStream ? o.dict : null;
-      if (!dict) return;
+    };
+
+    const inspectDict = (dict: PDFDict): void => {
 
       if (dict.has(PDFName.of('JS')) || dict.has(PDFName.of('JavaScript'))) found.active = true;
       const action = nameOf(resolve(dict.get(PDFName.of('S'))));
@@ -114,11 +179,12 @@ export async function inspectPdf(bytes: Uint8Array, opts: InspectOptions = {}): 
         const a = resolve(dict.get(PDFName.of('A')));
         if (a instanceof PDFDict && nameOf(resolve(a.get(PDFName.of('S')))) === 'URI') linkCount++;
       }
-
-      for (const [, v] of dict.entries()) if (!(v instanceof PDFRef)) visit(v, depth + 1);
     };
 
-    for (const [, obj] of ctx.enumerateIndirectObjects()) visit(obj, 0);
+    for (const [, obj] of ctx.enumerateIndirectObjects()) {
+      visit(obj);
+      if (tooBig) return fail('TOO_COMPLEX');
+    }
 
     if (found.active) return fail('ACTIVE_CONTENT');
     if (found.embedded) return fail('EMBEDDED_FILES');

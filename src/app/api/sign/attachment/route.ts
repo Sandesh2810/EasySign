@@ -9,6 +9,7 @@ import { friendlyDbError, isSameOrigin, json } from '@/lib/request-guard';
 import { loadSignerContext, requestEvidence } from '@/lib/signing/session';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { sniffUpload } from '@/pdf/image-to-pdf';
+import { inspectPdf } from '@/pdf/inspect';
 import { getStorage } from '@/storage';
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -38,6 +39,12 @@ export async function POST(request: NextRequest) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const kind = sniffUpload(bytes);
   if (!kind) return json(415, { error: 'Attach a PDF, PNG or JPG file.' });
+  if (kind === 'pdf') {
+    // D-89 F5: the sender will open this file; scripts, automatic actions, files hidden inside and decompression
+    // bombs are refused (signed PDFs and form fields are fine in an attachment)
+    const scan = await inspectPdf(bytes, { allowSealed: true });
+    if (!scan.ok && (scan.code === 'ACTIVE_CONTENT' || scan.code === 'EMBEDDED_FILES' || scan.code === 'TOO_COMPLEX')) return json(415, { error: scan.message });
+  }
 
   const env = ctx.envelope as { id: string; org_id: string };
   const path = `${env.org_id}/${env.id}/att-${randomUUID()}.${EXT[kind]}`;

@@ -78,8 +78,10 @@ export function parseCsv(input: string): string[][] {
 /** A cell as written to a CSV that people open in spreadsheets: quoted when needed, formulas neutralised. */
 export function csvCell(v: string): string {
   let s = String(v ?? '');
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  return /[",\n\r]/.test(s) || s !== s.trim() ? `"${s.replace(/"/g, '""')}"` : s;
+  // a formula start, also after leading spaces (D-89 F8)
+  if (/^[\t\r]|^\s*[=+\-@]/.test(s)) s = `'${s}`;
+  // quoted whenever it holds a separator: a comma, or a semicolon for spreadsheets set to split on semicolons (D-89 F8)
+  return /[",;\n\r]/.test(s) || s !== s.trim() ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 export const toCsv = (rows: string[][]): string => rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';

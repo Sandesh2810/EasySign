@@ -39,6 +39,9 @@ export async function uploadLogoAction(form: FormData): Promise<Result> {
   const file = form.get('logo');
   if (!orgId.success || !(file instanceof File)) return { ok: false, message: 'Choose a logo file.' };
   const user = await requireUser('/app/settings');
+  // D-89: nothing is written to storage for a workspace this person does not run (the database checks again)
+  const { data: role } = await supabaseAdmin().from('memberships').select('role').eq('org_id', orgId.data).eq('user_id', user.id).is('deactivated_at', null).maybeSingle();
+  if (role?.role !== 'owner' && role?.role !== 'admin') return { ok: false, message: 'Only the workspace’s owner or an administrator can change its branding.' };
   if (file.size === 0 || file.size > MAX_LOGO_BYTES) return { ok: false, message: 'The logo must be a PNG or JPEG file of up to 200 KB.' };
   const bytes = new Uint8Array(await file.arrayBuffer());
   const type = logoType(bytes);

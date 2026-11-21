@@ -31,12 +31,16 @@ describe('csvCell (writing reports people open in spreadsheets)', () => {
     expect(csvCell('-2')).toBe("'-2");
     expect(csvCell('@SUM(A1)')).toBe("'@SUM(A1)");
     expect(csvCell('plain')).toBe('plain');
+    // D-89 F8: a semicolon splits cells in some spreadsheet settings; a formula behind leading spaces still runs
+    expect(csvCell("x;=cmd|' /C calc'!A0")).toBe("\"x;=cmd|' /C calc'!A0\"");
+    expect(csvCell('  =1+1')).toBe("'  =1+1");
     expect(csvCell('a,b')).toBe('"a,b"');
   });
 });
 
 describe('properties', () => {
-  const cell = fc.string({ maxLength: 20 }).filter((s) => !/^[=+\-@\t\r]/.test(s) && !s.includes('\r'));
+  // cells the writer leaves as they are: not starting like a formula, also not after leading spaces (D-89 F8)
+  const cell = fc.string({ maxLength: 20 }).filter((s) => !/^[\t\r]|^\s*[=+\-@]/.test(s) && !s.includes('\r'));
   it('writing then reading gives the same rows back (cells that do not start like a formula)', () => {
     fc.assert(
       fc.property(fc.array(fc.array(cell, { minLength: 2, maxLength: 5 }), { minLength: 1, maxLength: 20 }), (rows) => {

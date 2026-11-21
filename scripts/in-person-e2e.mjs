@@ -9,6 +9,7 @@
 //   one unlocks; the person signs; the host takes the device back with the PIN and lands on the document;
 // * the document page and the sealed certificate say "in person, hosted by …"; the audit trail has every step;
 // * signing out from the PIN page ends an open in-person signing.
+// * (D-89) if the signer declines on the device, the host's account still asks for the PIN.
 // Needs the app AND the background worker running. Synthetic accounts only. Signs in twice. Takes about 6 minutes.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -237,6 +238,23 @@ async function main() {
       const text = await pdfText(file);
       check('the sealed certificate says the person signed in person and who hosted it', text.includes('In-person signer') && text.includes(`hosted by ${HOST.name} <${HOST.email}>`));
     } else check('the background worker sealed the document', false, 'is the worker running?');
+
+    // ---------- D-89 F1: the signer declines on the device; the host's account stays behind the PIN ----------
+    const env3 = await draft(db, u.id, org, 'Declined agreement (in person)');
+    await rpc(db, 'save_recipients', { p_actor: u.id, p_envelope_id: env3.id, p_recipients: [{ name: KIM.name, email: KIM.email, role: 'in_person', routing_order: 1 }] });
+    await fieldsAndSend(db, u.id, env3.id, env3.docId, 'link');
+    await startHosting(host, env3.id);
+    await host.waitForSelector('input[name="agree"]', { timeout: 30000 });
+    await host.waitForNetworkIdle({ idleTime: 800, timeout: 20000 }).catch(() => null);
+    await tap(host, 'button::-p-text(Decline this document instead)');
+    await host.waitForSelector('#decline-reason', { visible: true });
+    await tap(host, 'button::-p-text(Decline the document)');
+    await host.waitForFunction(() => location.pathname.startsWith('/sign/declined'), { timeout: 30000 }).catch(() => null);
+    await host.goto(`${APP}/app/templates`, { waitUntil: 'networkidle0' });
+    const stillLocked = host.url().includes('/in-person') && (await pageText(host)).includes('has ended, but this device was handed over');
+    await host.type('#return-pin', PIN);
+    await Promise.all([host.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }), host.click('button::-p-text(Return to my account)')]);
+    check('when the signer declines on the device, the host’s account still asks for the PIN, and the PIN opens it', stillLocked && host.url().endsWith(`/app/envelopes/${env3.id}`));
 
     // ---------- signing out ends an open in-person signing ----------
     const env2 = await draft(db, u.id, org, 'Second agreement (in person)');

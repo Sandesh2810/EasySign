@@ -83,11 +83,13 @@ describe('AT3.5 rate limits, one per endpoint', () => {
     expect(html).toContain(TOO_MANY);
   });
 
-  it('sign-in: 10 tries per account per network per 15 minutes, while other accounts from the same network still get through', async () => {
+  it('sign-in: 10 tries per account per 15 minutes from any network (D-89 F7), while other accounts from the same network still get through', async () => {
     const ip = caller();
     const email = `rl-${randomBytes(4).toString('hex')}@example.test`;
-    await fill('signin_account', `${email}|${ip}`, 10, 900);
+    await fill('signin_account', email, 10, 900);
     expect(await submitForm('/login', { email, password: 'not-the-password-1' }, ip)).toContain(TOO_MANY);
+    // the same account from another network is refused too: guessing from many addresses does not help
+    expect(await submitForm('/login', { email, password: 'not-the-password-1' }, caller())).toContain(TOO_MANY);
     const other = await submitForm('/login', { email: `rl-other-${randomBytes(4).toString('hex')}@example.test`, password: 'not-the-password-1' }, ip);
     expect(other).not.toContain(TOO_MANY);
     expect(other).toContain('That email and password do not match');

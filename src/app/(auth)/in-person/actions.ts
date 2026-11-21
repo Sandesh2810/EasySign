@@ -25,8 +25,10 @@ export async function returnToAccountAction(sessionId: string, pin: string): Pro
     (await cookies()).delete(signerCookieName()); // the signer session on this device ends with it
     redirect(`/app/envelopes/${s.envelope_id}`);
   }
-  if (data === 'ended') {
+  if (data === 'locked_out') {
+    // D-89: 5 wrong PINs: every lock of this host is cleared only by a full sign-in, so sign this browser out
     (await cookies()).delete(signerCookieName());
+    await supabaseAdmin().rpc('in_person_end_for_host', { p_actor: user.id });
     const supabase = await createSupabaseServerClient();
     await supabase.auth.signOut();
     redirect('/login');

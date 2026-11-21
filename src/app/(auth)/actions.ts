@@ -95,7 +95,7 @@ export async function signInAction(_prev: FormState, formData: FormData): Promis
   const parsed = signInSchema.safeParse({ email: formData.get('email'), password: formData.get('password') });
   if (!parsed.success) return { ok: false, message: 'Enter your email and password.' };
   const ip = await clientIp();
-  if (!(await allow(LIMITS_AUTH.signinPerIp, ip)) || !(await allow(LIMITS_AUTH.signinPerAccount, `${parsed.data.email}|${ip}`))) return { ok: false, message: TOO_MANY };
+  if (!(await allow(LIMITS_AUTH.signinPerIp, ip)) || !(await allow(LIMITS_AUTH.signinPerAccount, parsed.data.email.toLowerCase()))) return { ok: false, message: TOO_MANY };
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) return { ok: false, message: 'That email and password do not match, or the email has not been confirmed yet.' };

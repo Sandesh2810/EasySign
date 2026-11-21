@@ -27,7 +27,9 @@ async function HostReturn() {
     <>
       <h1 className="text-2xl font-medium text-ink">In-person signing in progress</h1>
       <p className="mt-3 text-base text-ink-body">
-        This device is being used for in-person signing of &ldquo;{s.title}&rdquo; by {s.signer_name}. To return to your account, enter the PIN you chose when you started. This ends the in-person signing.
+        {s.ended
+          ? `The in-person signing of "${s.title}" by ${s.signer_name} has ended, but this device was handed over. To return to your account, enter the PIN you chose when you started.`
+          : `This device is being used for in-person signing of "${s.title}" by ${s.signer_name}. To return to your account, enter the PIN you chose when you started. This ends the in-person signing.`}
       </p>
       <ReturnForm sessionId={s.session_id} />
       <p className="mt-8 text-sm text-ink-muted">Forgot the PIN? Signing out ends the in-person signing too; then sign in again.</p>

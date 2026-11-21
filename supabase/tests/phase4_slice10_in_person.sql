@@ -128,10 +128,11 @@ begin
   if ok then res := res || E'PASS T696 five wrong PINs end the session and retire its link; a new session replaces any open one for that person\n';
   else res := res || 'FAIL T696 wrong PINs and replacing :: st=' || coalesce(st, 'null') || ' n=' || n || E'\n'; end if;
 
-  -- T697: the host's account: open sessions are listed (the app asks for the PIN); only the host can end theirs;
-  -- the right PIN ends it ('finished' once the person signed); signing out ends every open one
+  -- T697: the host's account: sessions that still lock it are listed (the app asks for the PIN): the open one, and
+  -- (D-89) the two that ended without the host's PIN (wrong PINs, replaced); only the host can end theirs; the right PIN
+  -- ends it ('finished' once the person signed); signing out ends every open one and clears every lock
   select count(*) into n from public.in_person_host_open(a);
-  ok := n = 1 and (select count(*) from public.in_person_host_open(outsider)) = 0;
+  ok := n = 3 and (select count(*) from public.in_person_host_open(a) h where not h.ended) = 1 and (select count(*) from public.in_person_host_open(outsider)) = 0;
   st := public.in_person_host_end(outsider, s3, true);
   ok := ok and (select s.ended_at is null from public.in_person_sessions s where s.id = s3);
   st := public.in_person_host_end(a, s3, false);
@@ -143,11 +144,12 @@ begin
   execute 'set local role service_role';
   st := public.in_person_host_end(a, s3, true);
   ok := ok and st = 'ended' and (select s.end_reason = 'finished' from public.in_person_sessions s where s.id = s3)
-    and (select count(*) from public.in_person_host_open(a)) = 0;
+    and (select count(*) from public.in_person_host_open(a)) = 2;   -- the two that ended without the PIN still lock it
   s4 := public.start_in_person(a, e2, pat, s4_tok, repeat('c4', 16), repeat('d4', 32), pin);
   n := public.in_person_end_for_host(a);
   ok := ok and n = 1 and (select s.end_reason = 'signed_out' from public.in_person_sessions s where s.id = s4)
-    and (select k.revoked_at is not null from public.recipient_tokens k where k.id = s4_tok);
+    and (select k.revoked_at is not null from public.recipient_tokens k where k.id = s4_tok)
+    and (select count(*) from public.in_person_host_open(a)) = 0;
   if ok then res := res || E'PASS T697 the host''s open sessions are listed; only the host ends theirs, with the right PIN (recorded as finished once signed); signing out ends them all\n';
   else res := res || 'FAIL T697 host account :: n=' || n || ' st=' || coalesce(st, 'null') || E'\n'; end if;
 

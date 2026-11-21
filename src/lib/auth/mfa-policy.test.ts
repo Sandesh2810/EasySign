@@ -85,5 +85,8 @@ describe('who must enter a code (AT3.4; policy D-69)', () => {
     expect(safeNext('//evil.test')).toBe('/app');
     expect(safeNext('https://evil.test')).toBe('/app');
     expect(safeNext('/\\evil.test')).toBe('/app');
+    // D-89 F6: browsers strip a tab, so "/\t/evil" would become "//evil"
+    expect(safeNext('/\t/evil.example')).toBe('/app');
+    expect(safeNext('/\n/evil.example')).toBe('/app');
   });
 });

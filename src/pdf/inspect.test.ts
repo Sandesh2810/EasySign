@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { inspectPdf } from './inspect';
+import { deflateSync } from 'node:zlib';
+import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
+import { inflatesWithinLimits, inspectPdf } from './inspect';
 import { makeContractFixture, makeBlankPdf, makeHostilePdf } from './test-fixtures';
 
 describe('inspectPdf: accepts ordinary contracts', () => {
@@ -87,5 +89,42 @@ describe('inspectPdf: rejects what must not be signed or stored', () => {
     const r = await inspectPdf(truncated);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('UNREADABLE');
+  });
+});
+
+describe('inspectPdf: security review fixes (D-89)', () => {
+  it('F5: finds a script action however deeply it is nested inside a link', async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([612, 792]);
+    const ctx = doc.context;
+    // 20 levels of "go to … then next", all written inline, with a script at the bottom
+    let action: Record<string, unknown> = { S: 'JavaScript', JS: PDFString.of('app.alert(1)') };
+    for (let i = 0; i < 20; i++) action = { S: 'GoTo', D: [page.ref, 'Fit'], Next: action };
+    const annot = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Link', Rect: [10, 10, 100, 30], A: action } as Parameters<typeof ctx.obj>[0]));
+    page.node.set(PDFName.of('Annots'), ctx.obj([annot]));
+    const r = await inspectPdf(await doc.save({ useObjectStreams: false }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('ACTIVE_CONTENT');
+  });
+
+  it('F4: a small file whose stream unpacks to far more than its size is refused before it is parsed', async () => {
+    const zeros = deflateSync(Buffer.alloc(70 * 1024 * 1024)); // 70 MB of zeros, about 70 KB compressed
+    const doc = await PDFDocument.create();
+    doc.addPage([612, 792]);
+    const bytes = Buffer.from(await doc.save({ useObjectStreams: false }));
+    // append an extra compressed object by hand (an incremental-style addition the parser would read)
+    const extra = Buffer.concat([Buffer.from('\n99 0 obj\n<< /Length ' + zeros.length + ' /Filter /FlateDecode >>\nstream\n', 'latin1'), zeros, Buffer.from('\nendstream\nendobj\n', 'latin1')]);
+    const withBomb = new Uint8Array(Buffer.concat([bytes, extra]));
+    expect(withBomb.length).toBeLessThan(1024 * 1024);
+    expect(inflatesWithinLimits(withBomb)).toBe(false);
+    const r = await inspectPdf(withBomb);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('TOO_COMPLEX');
+  });
+
+  it('F4: ordinary compressed content passes the check', async () => {
+    expect(inflatesWithinLimits(await makeContractFixture())).toBe(true);
+    expect(inflatesWithinLimits(new Uint8Array(Buffer.concat([Buffer.from('stream\n'), deflateSync(Buffer.alloc(1000)), Buffer.from('\nendstream')])), { perStream: 10_000, total: 10_000 })).toBe(true);
+    expect(inflatesWithinLimits(new Uint8Array(Buffer.concat([Buffer.from('stream\n'), deflateSync(Buffer.alloc(20_000)), Buffer.from('\nendstream')])), { perStream: 10_000, total: 1e9 })).toBe(false);
   });
 });

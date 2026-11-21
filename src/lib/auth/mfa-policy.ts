@@ -2,6 +2,7 @@
 // Policy decided by Sandesh 2026-11-19: required for the platform admin, optional for everyone else.
 // Anyone who has switched it on must use it every time they sign in. Admin pages also need a recent code.
 import { createHash, randomInt } from 'node:crypto';
+import { safeNext as safeRedirect } from '@/lib/safe-redirect';
 
 /** How recent the admin's last authenticator code must be to use the admin pages. */
 export const ADMIN_MFA_FRESH_SECONDS = 12 * 3600;
@@ -74,8 +75,10 @@ export function usedAuthenticatorWithin(v: { aal: unknown; amr: unknown; nowSeco
   return last !== null && v.nowSeconds - last <= v.seconds && last <= v.nowSeconds + 60;
 }
 
-/** Only same-site paths, as for sign-in (the code page sends people back to where they were going). */
+/**
+ * Only same-site paths, as for sign-in (the code page sends people back to where they were going). D-89 F6: the same
+ * check as sign-in (control characters such as a tab, which browsers strip, used to make "/\t/evil" pass).
+ */
 export function safeNext(next: unknown, fallback = '/app'): string {
-  const s = typeof next === 'string' ? next : '';
-  return s.startsWith('/') && !s.startsWith('//') && !s.startsWith('/\\') ? s : fallback;
+  return safeRedirect(typeof next === 'string' ? next : null, fallback);
 }

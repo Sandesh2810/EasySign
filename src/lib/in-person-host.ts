@@ -10,9 +10,14 @@ export interface OpenInPersonSession {
   signer_name: string;
   pin_hash: string;
   started_at: string;
+  /** D-89: the signing itself has ended (declined, expired, …) but the host has not yet come back with the PIN */
+  ended: boolean;
 }
 
-/** The host's open sessions (expired ones are closed on the way). An error counts as "none" only if the lookup failed. */
+/**
+ * The host's sessions that still lock their account: open ones, and ended ones not yet cleared with the PIN or by
+ * signing out (D-89). If the lookup fails it throws, so the account never opens by mistake.
+ */
 export async function openInPersonSessions(userId: string): Promise<OpenInPersonSession[]> {
   const { data, error } = await supabaseAdmin().rpc('in_person_host_open', { p_actor: userId });
   if (error) throw new Error('Could not check for in-person signing in progress.');

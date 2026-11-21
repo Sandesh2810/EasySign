@@ -159,12 +159,14 @@ async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
     if (!['sent', 'in_progress'].includes(envelope.status as string)) throw new Error('envelope is no longer open');
     const commentId = typeof row.payload?.comment_id === 'string' ? row.payload.comment_id : '';
     const [{ data: recipient }, { data: token }, { data: comment }, sender] = await Promise.all([
-      db.from('recipients').select('name, email').eq('id', row.recipient_id).maybeSingle(),
+      db.from('recipients').select('name, email, role').eq('id', row.recipient_id).maybeSingle(),
       db.from('recipient_tokens').select('id, nonce, expires_at').eq('recipient_id', row.recipient_id).is('revoked_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       db.from('envelope_comments').select('body').eq('id', commentId).eq('recipient_id', row.recipient_id).eq('author_kind', 'sender').maybeSingle(),
       userEmail(envelope.sender_id as string),
     ]);
     if (!recipient || !token || !comment) throw new Error('recipient, link or answer not found');
+    // D-89 F3: an in-person signer's link never leaves the host's device
+    if (recipient.role === 'in_person') throw new Error('no link is emailed to someone who signs in person');
     return {
       to: recipient.email as string,
       replyTo: sender.email,
@@ -188,6 +190,8 @@ async function prepareUnbranded(row: OutboxRow): Promise<Prepared> {
       userEmail(envelope.sender_id as string),
     ]);
     if (!recipient || !token) throw new Error('recipient or link not found');
+    // D-89 F3: an in-person signer's link never leaves the host's device
+    if (recipient.role === 'in_person') throw new Error('no link is emailed to someone who signs in person');
     return {
       to: recipient.email as string,
       // the sender's account address, which they confirmed when they signed up
