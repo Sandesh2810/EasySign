@@ -6,7 +6,7 @@ import { CHECK_LABEL, ROLE_LABEL, type IdentityCheck } from '@/lib/recipient-lab
 import { assignOrders, MAX_RECIPIENTS, mustAct, validateRouting, type Role, type RoutingMode } from '@/lib/routing';
 import { saveRecipientsAction } from '../actions';
 
-type EditableRole = 'signer' | 'approver' | 'viewer' | 'cc';
+type EditableRole = 'signer' | 'in_person' | 'approver' | 'viewer' | 'cc';
 export interface EditableRecipient {
   id: string | null;
   name: string;
@@ -27,7 +27,7 @@ interface Row extends EditableRecipient {
 }
 const CHECKS: IdentityCheck[] = ['link', 'access_code', 'email_otp'];
 
-const ROLE_CHOICES: EditableRole[] = ['signer', 'approver', 'viewer', 'cc'];
+const ROLE_CHOICES: EditableRole[] = ['signer', 'in_person', 'approver', 'viewer', 'cc'];
 const MODES: { id: RoutingMode; label: string; help: string }[] = [
   { id: 'sequential', label: 'One after another', help: 'Each person is asked only after the person above them has finished.' },
   { id: 'parallel', label: 'All at once', help: 'Everyone is asked at the same time and can finish in any order.' },
@@ -82,7 +82,7 @@ export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { env
   const summary = useMemo(() => describe(rows, orders), [rows, orders]);
   const meListed = rows.some((r) => r.email.trim().toLowerCase() === me.email.toLowerCase());
   // no extra check for someone who only gets a copy, or for yourself
-  const canHaveCheck = (r: Row) => r.role !== 'cc' && r.email.trim().toLowerCase() !== me.email.toLowerCase();
+  const canHaveCheck = (r: Row) => r.role !== 'cc' && r.role !== 'in_person' && r.email.trim().toLowerCase() !== me.email.toLowerCase();
 
   const change = (next: Row[]) => {
     setRows(next);

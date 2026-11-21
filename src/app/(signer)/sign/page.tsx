@@ -15,6 +15,7 @@ import { PaperCopyControl } from './paper-withdraw';
 import { Finalising } from './finalising';
 import { AccessCodeForm, EmailCodeForm } from './gate-form';
 import { SigningRoom, type RoomField } from './signing-room';
+import { HostPinForm, InPersonGuard } from './in-person';
 
 export const metadata: Metadata = { title: 'Sign document' };
 
@@ -39,11 +40,31 @@ function Message({ title, body, children }: { title: string; body: string; child
 async function Sign() {
   // allowUnverified: this page also shows the code screen. Everything below the gate check runs only
   // for a session that has passed it (or needs none).
-  const ctx = await loadSignerContext({ allowUnverified: true });
+  const ctx = await loadSignerContext({ allowUnverified: true, allowLocked: true });
   if (!ctx) {
     return <Message title="Your signing session has ended" body="For your security a signing session lasts two hours. Open the link from your email again to continue where you left off." />;
   }
   const { envelope, recipient } = ctx;
+  // D-86: in-person signing on the host's device
+  const host = ctx.inPerson;
+  if (host?.state === 'ended') {
+    return <Message title="This in-person signing has ended" body={`Please hand the device back to ${host.hostName}. They can start it again from the document if needed.`} />;
+  }
+  if (host?.state === 'locked') {
+    return (
+      <Message title="The screen is locked" body={`For privacy this screen locked itself. Please hand the device to ${host.hostName} to unlock it.`}>
+        <HostPinForm mode="unlock" hostName={host.hostName} />
+      </Message>
+    );
+  }
+  if (host && (recipient.status === 'signed' || recipient.status === 'approved')) {
+    return (
+      <Message title={`Thank you, ${recipient.name}. Your signature is recorded.`} body={`Please hand the device back to ${host.hostName} now. A copy of the completed document will be sent to your email address.`}>
+        <HostPinForm mode="handback" hostName={host.hostName} />
+      </Message>
+    );
+  }
+  const guard = (node: React.ReactNode) => (host ? <InPersonGuard hostName={host.hostName} signerName={recipient.name}>{node}</InPersonGuard> : node);
   const admin = supabaseAdmin();
   if (ctx.onHold) {
     return <Message title="This document is on hold" body="This document is on hold. YouNMeSign has suspended the account that sent it while a concern is being looked into. You cannot sign it right now. Do not send money or personal details to anyone because of this document. If you know the sender, contact them another way." />;
@@ -118,7 +139,7 @@ async function Sign() {
   const senderLine = recipient.is_sender ? 'You are signing your own document' : `Sent by ${senderName}`;
   // D-84: this person's private conversation with the sender (not shown to someone signing their own document)
   const questions = async () => {
-    if (recipient.is_sender) return null;
+    if (recipient.is_sender || host) return null;
     const { data } = await admin.from('envelope_comments').select('id, author_kind, body, created_at').eq('recipient_id', recipient.id).order('created_at');
     const thread: ThreadItem[] = (data ?? []).map((c) => ({ id: c.id as string, mine: c.author_kind === 'signer', body: c.body as string, at: c.created_at as string }));
     return <QuestionsPanel thread={thread} senderName={senderName === 'you' ? 'the sender' : senderName} />;
@@ -153,7 +174,7 @@ async function Sign() {
       admin.from('consents').select('withdrawn_at').eq('recipient_id', recipient.id).not('withdrawn_at', 'is', null).order('withdrawn_at', { ascending: false }).limit(1).maybeSingle(),
       admin.from('sender_tasks').select('created_at').eq('recipient_id', recipient.id).eq('kind', 'paper_copy').is('done_at', null).maybeSingle(),
     ]);
-    return (
+    return guard(
       <div className="mx-auto max-w-2xl px-4 py-10">
         <p className="text-sm text-ink-muted">{senderLine}</p>
         <h1 className="mt-1 text-2xl font-medium text-ink">{envelope.title}</h1>
@@ -180,7 +201,7 @@ async function Sign() {
         {/* a div, not a paragraph: the control carries its own dialog, which may not sit inside a <p> */}
         <div className="mt-6 flex flex-wrap gap-2">
           {openPaper ? null : <PaperCopyControl variant="quiet" />}
-          {envelope.allow_delegation && recipient.role !== 'viewer' ? <HandOffControl /> : null}
+          {envelope.allow_delegation && recipient.role !== 'viewer' && !host ? <HandOffControl /> : null}
           <DeclineControl variant="quiet" label="Decline this document instead" />
         </div>
       </div>
@@ -190,7 +211,7 @@ async function Sign() {
     return <Message title="Nothing is waiting for you here" body="There is no signing step left for you on this document." />;
   }
   if (recipient.role === 'approver') {
-    return <SigningRoom mode="approve" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText={APPROVE_TEXT} allowHandOff={envelope.allow_delegation} questions={await questions()} />;
+    return guard(<SigningRoom mode="approve" title={envelope.title} senderLine={senderLine} signer={{ name: recipient.name, email: recipient.email }} fields={[]} adopted={{ signature: false, initials: false }} intentText={APPROVE_TEXT} allowHandOff={envelope.allow_delegation && !host} questions={await questions()} />);
   }
 
   const [{ data: fields }, { data: values }, { data: assets }] = await Promise.all([
@@ -213,7 +234,7 @@ async function Sign() {
   }));
   const kinds = new Set((assets ?? []).map((a) => a.kind as string));
 
-  return (
+  return guard(
     <SigningRoom
       title={envelope.title}
       mode="sign"
@@ -222,8 +243,8 @@ async function Sign() {
       fields={roomFields}
       adopted={{ signature: kinds.has('signature'), initials: kinds.has('initials') }}
       intentText={INTENT_TEXT}
-      allowHandOff={envelope.allow_delegation}
+      allowHandOff={envelope.allow_delegation && !host}
       questions={await questions()}
-    />
+    />,
   );
 }

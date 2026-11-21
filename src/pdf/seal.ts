@@ -40,6 +40,8 @@ export interface SealRecipient {
   group?: { label: string; completedBy: string | null };
   /** D-83: earlier holders of this place, oldest first: who handed it over, to whom, when and why */
   handoffs?: { fromName: string; fromEmail: string; toName: string; by: 'sender' | 'signer'; at: Date; reason: string | null }[];
+  /** D-86: signed in person on this host's device */
+  inPerson?: { hostName: string; hostEmail: string };
 }
 
 export type SealField =
@@ -467,6 +469,7 @@ function writeCertificate(doc: PDFDocument, fonts: Fonts, input: SealInput, orig
     line(fonts.safe(`${i + 1}. ${r.name} <${r.email}>`), LEFT, 9.5, fonts.bold);
     y -= 16;
     kv('Role', `${ROLE_LABEL[r.role]} · order ${r.order}`);
+    if (r.inPerson) kv('Signed in person', fonts.safe(`hosted by ${r.inPerson.hostName} <${r.inPerson.hostEmail}>, on the host's device`));
     if (r.group) kv('Signing group', fonts.safe(r.group.completedBy ? `${r.group.label} · not needed: ${r.group.completedBy} signed for the group` : r.group.label));
     if (r.handoffs?.length) {
       kvLines(

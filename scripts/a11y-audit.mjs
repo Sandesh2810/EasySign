@@ -172,7 +172,13 @@ async function prepare() {
   if (qa.error) throw new Error(`questions: ${qa.error.message}`);
   const keyboardOnly = await makeEnvelope('Accessibility check (keyboard only)', [{ name: 'Kim Keys', email: 'a11y-keys@example.test' }], true);
   const keyboardToken = await sendWithLink(keyboardOnly);
-  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId };
+  // Phase 4 slice 10 (D-86): a document whose only person signs in person (nothing left over from an interrupted run)
+  await rpc(db, 'in_person_end_for_host', { p_actor: sender.id });
+  const inPerson = await makeEnvelope('Accessibility check (in person)', [{ name: 'Ines Inperson', email: 'a11y-inperson@example.test' }]);
+  await rpc(db, 'save_recipients', { p_actor: sender.id, p_envelope_id: inPerson.id,
+    p_recipients: [{ id: inPerson.recipients[0].id, name: 'Ines Inperson', email: 'a11y-inperson@example.test', role: 'in_person', routing_order: 1 }] });
+  await sendWithLink(inPerson);
+  return { password, draftId: draft.id, sentId: sent.id, token, keyboardToken, templateId, bulkTemplateId, batchId, inPersonId: inPerson.id };
 }
 
 /** Press Tab until the focused element's name matches, then press the key. Fails if it is never reached. */
@@ -499,6 +505,41 @@ async function main() {
         await waitText(page, /All changes saved/, 20000);
       }
       if (p === '/app') await lighthouseCheck(page, label, `${APP}${p}`, false);
+    }
+
+    // ---- in-person signing on a tablet-width screen (D-86, AT4.7) ----
+    say('In-person signing (tablet width, 768 px)');
+    {
+      const PIN = '4071';
+      await page.setViewport({ width: 768, height: 1024 });
+      await page.goto(`${APP}/app/envelopes/${data.inPersonId}`, { waitUntil: 'networkidle0' });
+      await settle(page, 800);
+      await click(page, 'button::-p-text(Start signing in person)');
+      await page.waitForSelector('dialog[open] input[type="password"]', { visible: true, timeout: 10000 });
+      await axeCheck(page, 'Sender: start signing in person (dialog)');
+      const pins = await page.$$('dialog[open] input[type="password"]');
+      await pins[0].type(PIN);
+      await pins[1].type(PIN);
+      await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }), click(page, 'button::-p-text(Hand the device to Ines Inperson)')]);
+      await waitText(page, /Signing in person with/, 20000);
+      await settle(page, 1200);
+      await axeCheck(page, 'In person: signing screen with the host banner');
+      await reflowCheck(page, 'In person: signing screen with the host banner');
+      await lighthouseCheck(page, 'In person: signing screen with the host banner', `${APP}/sign`, true);
+      await click(page, 'button::-p-text(Lock the screen)');
+      await waitText(page, /The screen is locked/, 20000);
+      await settle(page, 600);
+      await axeCheck(page, 'In person: locked screen (host PIN)');
+      await reflowCheck(page, 'In person: locked screen (host PIN)');
+      await page.goto(`${APP}/app`, { waitUntil: 'networkidle0' });
+      if (!page.url().includes('/in-person')) failures.push('in person: the host account did not ask for the PIN');
+      await settle(page, 600);
+      await axeCheck(page, 'Host: in-person signing in progress (PIN page)');
+      await reflowCheck(page, 'Host: in-person signing in progress (PIN page)');
+      await page.type('#return-pin', PIN);
+      await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }), click(page, 'button::-p-text(Return to my account)')]);
+      if (!page.url().includes(`/app/envelopes/${data.inPersonId}`)) failures.push('in person: the PIN did not return the host to the document');
+      await page.setViewport({ width: 1280, height: 900 });
     }
   } catch (e) {
     if (process.env.A11Y_DEBUG_SHOT && pageRef) await pageRef.screenshot({ path: process.env.A11Y_DEBUG_SHOT, fullPage: true }).catch(() => {});

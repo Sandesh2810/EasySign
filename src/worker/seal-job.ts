@@ -37,6 +37,8 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
   const values = await must(db.from('field_values').select('field_id, value_text, signature_asset_id, signature_id').eq('envelope_id', id), 'the field values');
   // D-83: who handed whose place to whom, for the certificate
   const handoffRows = await must(db.from('recipient_handoffs').select('recipient_id, by_kind, from_name, from_email, to_name, reason, created_at').eq('envelope_id', id).order('created_at'), 'the handoffs');
+  // D-86: who hosted each in-person signer: the session in which they finished
+  const hostRows = await must(db.from('in_person_sessions').select('recipient_id, host_name, host_email, end_reason, started_at').eq('envelope_id', id).order('started_at'), 'the in-person sessions');
   const consents = await must(db.from('consents').select('recipient_id, disclosure_version, ip, user_agent, given_at').eq('envelope_id', id).is('withdrawn_at', null).order('given_at'), 'the consent records');
   const recipientIds = recipients.map((r) => r.id as string);
   const assets = await must(db.from('signature_assets').select('id, recipient_id, kind, method, storage_backend, storage_path, sha256').in('recipient_id', recipientIds), 'the signatures');
@@ -105,6 +107,12 @@ async function buildInput(job: ClaimedJob): Promise<{ input: SealInput; orgId: s
       role: r.role as SealRecipient['role'],
       order: r.routing_order as number,
       handoffs: handoffRows.filter((h) => h.recipient_id === r.id).map((h) => ({ fromName: h.from_name as string, fromEmail: h.from_email as string, toName: h.to_name as string, by: h.by_kind as 'sender' | 'signer', at: new Date(h.created_at as string), reason: (h.reason as string | null) ?? null })),
+      inPerson: (() => {
+        if (r.role !== 'in_person') return undefined;
+        const mine = hostRows.filter((h) => h.recipient_id === r.id);
+        const h = mine.find((x) => x.end_reason === 'finished') ?? mine.at(-1);
+        return h ? { hostName: h.host_name as string, hostEmail: h.host_email as string } : undefined;
+      })(),
       group: r.signing_group ? { label: r.signing_group as string, completedBy: r.group_completed_by ? ((recipientOf.get(r.group_completed_by as string)?.name as string | undefined) ?? null) : null } : undefined,
       authMethod: r.auth_method as SealRecipient['authMethod'],
       consentVersion: (consent?.disclosure_version as string | undefined) ?? null,

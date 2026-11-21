@@ -3,6 +3,7 @@ import 'server-only';
 import { NextResponse, type NextRequest } from 'next/server';
 import { env } from '@/lib/env';
 import { getUser, mfaStatus, type SessionUser } from '@/lib/auth/session';
+import { openInPersonSessions } from '@/lib/in-person-host';
 
 export const json = (status: number, body: Record<string, unknown>) =>
   NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -25,6 +26,10 @@ export async function requireApiUser(request: NextRequest, opts: { mutation: boo
   // two-step sign-in (D-69): someone who switched it on must have entered a code in this session
   if (user.aal !== 'aal2' && (await mfaStatus(user.id)).enrolled) {
     return { response: json(401, { error: 'Enter the code from your authenticator app first.' }) };
+  }
+  // D-86: in-person signing is in progress on this person's device
+  if ((await openInPersonSessions(user.id)).length) {
+    return { response: json(423, { error: 'In-person signing is in progress. Enter your PIN on the YouNMeSign page to return to your account.' }) };
   }
   return { user };
 }

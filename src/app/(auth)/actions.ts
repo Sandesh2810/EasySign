@@ -117,6 +117,10 @@ export async function confirmEmailAction(_prev: FormState, formData: FormData): 
 
 export async function signOutAction(): Promise<void> {
   const supabase = await createSupabaseServerClient();
+  // D-86: signing out ends any in-person signing this person is hosting (its link stops working at once)
+  const { data } = await supabase.auth.getClaims();
+  const userId = typeof data?.claims?.sub === 'string' ? data.claims.sub : null;
+  if (userId) await supabaseAdmin().rpc('in_person_end_for_host', { p_actor: userId });
   await supabase.auth.signOut();
   redirect('/login');
 }

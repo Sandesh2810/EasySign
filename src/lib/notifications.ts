@@ -52,6 +52,9 @@ export function describeNotification(kind: string, payload: unknown): NoticeView
         tone: notSent ? 'attention' : 'good',
       };
     }
+    case 'in_person_turn':
+      // D-86: an in-person signer is never emailed; the sender starts the signing on their own device
+      return { text: `It is ${by}'s turn to sign ${title} in person. When you are with them, open the document and choose "Start signing in person".`, path, tone: 'attention' };
     case 'comment_added':
       // D-84: a question in the document's conversation
       return { text: `${by} asked a question about ${title}. Open the document to answer.`, path, tone: 'attention' };

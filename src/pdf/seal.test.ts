@@ -32,7 +32,8 @@ async function input(original: Uint8Array): Promise<SealInput> {
     },
     recipients: [
       {
-        id: 'r1', name: 'Alice Example', email: 'alice@example.test', role: 'signer', order: 1, authMethod: 'link',
+        // D-86: Alice signed in person on the sender's device
+        id: 'r1', name: 'Alice Example', email: 'alice@example.test', role: 'in_person', order: 1, authMethod: 'link', inPerson: { hostName: 'Sandra Sender', hostEmail: 'sender@example.test' },
         consentVersion: 'esign-consent-v1', signatureMethod: 'drawn', ip: '203.0.113.7', userAgent: 'Mozilla/5.0 (iPhone) Safari', region: 'US-TX (approximate)',
         timeline: { sent: new Date('2026-11-17T09:00:00Z'), viewed: new Date('2026-11-17T09:55:00Z'), consented: new Date('2026-11-17T09:56:00Z'), completed: signedAt },
       },
@@ -155,7 +156,7 @@ describe('buildSealedPdf', () => {
       'Alice Example', 'alice@example.test', 'Zoë Müller-Łukasz', 'zoe@example.test', '203.0.113.7', '2001:db8::1',
       'esign-consent-v1', 'Link only', 'Access code', 'Drawn', 'Typed', '2026-11-17 09:56:00 UTC', 'US-TX (approximate)', 'Not determined',
       'not proof of physical presence',
-      'Handed over', 'Ben Before <ben@example.test>', 'by Ben Before', '2026-11-17 10:01:00 UTC', 'On leave', 'Signing group', 'Board',
+      'In-person signer', 'Signed in person', 'hosted by Sandra Sender <sender@example.test>', 'Handed over', 'Ben Before <ben@example.test>', 'by Ben Before', '2026-11-17 10:01:00 UTC', 'On leave', 'Signing group', 'Board',
     ]) {
       expect(cert, `certificate should contain "${needle}"`).toContain(needle);
     }

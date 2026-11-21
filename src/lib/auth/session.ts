@@ -5,6 +5,7 @@ import { connection } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { mfaGate } from './mfa-policy';
+import { IN_PERSON_HOST_PAGE, openInPersonSessions } from '@/lib/in-person-host';
 
 export interface SessionUser {
   id: string;
@@ -58,6 +59,8 @@ export async function requireUser(next?: string): Promise<SessionUser> {
       redirect(codePage(next ?? '/app'));
     }
   }
+  // D-86: this person's device is with an in-person signer; their account opens only with the PIN
+  if ((await openInPersonSessions(user.id)).length) redirect(IN_PERSON_HOST_PAGE);
   return user;
 }
 

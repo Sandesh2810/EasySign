@@ -9,7 +9,7 @@ import { createServerClient } from '@supabase/ssr';
 import { buildCsp, newNonce } from '@/lib/csp';
 import { authCookieOptions } from '@/lib/supabase/cookie-options';
 
-const SESSION_ROUTES = /^\/(app|login|signup|mfa|auth)(\/|$)/;
+const SESSION_ROUTES = /^\/(app|login|signup|mfa|auth|in-person)(\/|$)/;
 
 export async function proxy(request: NextRequest) {
   const appUrl = process.env.APP_URL ?? 'http://localhost:3000';

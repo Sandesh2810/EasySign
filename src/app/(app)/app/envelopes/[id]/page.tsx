@@ -20,6 +20,7 @@ import { MoveToFolderForm } from "../../folders/folder-forms";
 import { buildTimeline } from "@/lib/timeline";
 import { FieldEditor, type EditorField } from "./field-editor";
 import { PersonActions, VoidPanel } from "./open-actions";
+import { StartInPerson } from "./start-in-person";
 import { RecipientsEditor, type EditableRecipient } from "./recipients-editor";
 import { groupsOf, representatives } from "@/lib/groups";
 import { SendPanel, SigningLinkPanel } from "./send-panel";
@@ -236,8 +237,14 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
     locked: Boolean(f.locked),
     options: (f.options ?? {}) as FieldOptions,
   }));
+  // D-86: who hosted each in-person signer (the session in which they finished, else the latest one)
+  const { data: ipRows } =
+    !isDraft && recipients.some((r) => r.role === "in_person")
+      ? await supabaseAdmin().from("in_person_sessions").select("recipient_id, host_name, end_reason, started_at").eq("envelope_id", env.id).order("started_at")
+      : { data: [] };
+  const hostedBy = new Map<string, string>();
+  for (const row of ipRows ?? []) if (row.end_reason === "finished" || !hostedBy.has(row.recipient_id as string)) hostedBy.set(row.recipient_id as string, row.host_name as string);
   const editable: EditableRecipient[] = recipients
-    .filter((r) => r.role !== "in_person")
     .map((r) => ({
       id: r.id,
       name: r.name,
@@ -371,6 +378,12 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
                   {r.status === "skipped" && r.group_completed_by
                     ? `Not needed: ${recipients.find((x) => x.id === r.group_completed_by)?.name ?? "another member"} signed for the group`
                     : progressLabel(r.role, r.status)}
+                  {r.role === "in_person" && hostedBy.has(r.id) && ["signed", "declined"].includes(r.status) ? (
+                    <span className="block font-normal text-ink-body">In person, hosted by {hostedBy.get(r.id)}</span>
+                  ) : null}
+                  {r.role === "in_person" && isOpen && !viewOnly && !deleted && ["sent", "viewed", "consented"].includes(r.status) ? (
+                    <StartInPerson envelopeId={env.id} recipientId={r.id} name={r.name} />
+                  ) : null}
                   {locked.has(r.id) ? (
                     <span className="block font-normal text-ink-body">
                       Locked after too many wrong codes
@@ -387,10 +400,11 @@ async function Envelope({ params }: { params: Promise<{ id: string }> }) {
                     canResend={
                       env.delivery === "email" &&
                       r.role !== "cc" &&
+                      r.role !== "in_person" &&
                       !r.is_sender &&
                       ["sent", "viewed", "consented"].includes(r.status)
                     }
-                    canCorrect={[
+                    canCorrect={r.role !== "in_person" && [
                       "created",
                       "sent",
                       "viewed",

@@ -19,6 +19,7 @@ describe('in-app notices', () => {
       'comment_added',
       'scheduled_send_failed',
       'bulk_done',
+      'in_person_turn',
       'envelope_completed',
       'envelope_declined',
       'envelope_expired',
@@ -52,6 +53,12 @@ describe('in-app notices', () => {
     expect(describeNotification('scheduled_send_failed', { envelope_id: ID, title: 'Report', error: 'account suspended' }).text).toBe(
       '"Report" could not be sent at the time you chose: account suspended. It is still a draft; fix it and send or schedule it again.',
     );
+  });
+
+  it('an in-person signer’s turn tells the sender what to do (D-86)', () => {
+    const v = describeNotification('in_person_turn', { envelope_id: ID, title: 'Lease 2027', by: 'Kim Keys' });
+    expect(v.text).toBe('It is Kim Keys\'s turn to sign "Lease 2027" in person. When you are with them, open the document and choose "Start signing in person".');
+    expect(v.path).toBe(`/app/envelopes/${ID}`);
   });
 
   it('a held email tells the sender what waits, until when, and what they can do now', () => {

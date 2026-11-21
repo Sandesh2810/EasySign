@@ -59,6 +59,8 @@ export interface SignerContext {
     /** D-83: the sender lets signers hand their part to someone else */
     allow_delegation: boolean;
   };
+  /** D-86: set when this session is in-person signing on the host's device */
+  inPerson: { sessionId: string; hostName: string; state: 'active' | 'locked' | 'ended' } | null;
 }
 
 /**
@@ -67,13 +69,20 @@ export interface SignerContext {
  * null, so every page, action and download is closed by default. Only the code screen and its own
  * actions pass allowUnverified, and they must look at ctx.gate.
  */
-export async function loadSignerContext(opts: { allowUnverified?: boolean } = {}): Promise<SignerContext | null> {
+export async function loadSignerContext(opts: { allowUnverified?: boolean; allowLocked?: boolean } = {}): Promise<SignerContext | null> {
   const claims = await readSignerClaims();
   if (!claims) return null;
   const admin = supabaseAdmin();
   const { data: tok } = await admin.from('recipient_tokens').select('id, recipient_id, envelope_id, expires_at, revoked_at').eq('id', claims.tokenId).maybeSingle();
-  if (!tok || tok.revoked_at || new Date(tok.expires_at as string).getTime() <= Date.now()) return null;
-  if (tok.recipient_id !== claims.recipientId || tok.envelope_id !== claims.envelopeId) return null;
+  // D-86: an in-person session whose link was retired (ended) is still described, so the page can say so
+  const { data: ip } = await admin.rpc('in_person_touch', { p_token_id: claims.tokenId });
+  const ipRow = (Array.isArray(ip) ? ip[0] : null) as { session_id: string; host_name: string; state: 'active' | 'locked' | 'ended' } | null;
+  const inPerson = ipRow ? { sessionId: ipRow.session_id, hostName: ipRow.host_name, state: ipRow.state } : null;
+  // only the page itself (allowLocked) sees a locked or ended in-person session; every action and download is refused
+  if (inPerson && inPerson.state !== 'active' && !opts.allowLocked) return null;
+  if (!tok || tok.recipient_id !== claims.recipientId || tok.envelope_id !== claims.envelopeId) return null;
+  const linkDead = Boolean(tok.revoked_at) || new Date(tok.expires_at as string).getTime() <= Date.now();
+  if (linkDead && !(inPerson && opts.allowLocked)) return null;
   const [{ data: recipient }, { data: envelope }] = await Promise.all([
     admin.from('recipients').select('id, name, email, role, status, is_sender, completed_at, auth_method').eq('id', tok.recipient_id).maybeSingle(),
     admin
@@ -95,7 +104,7 @@ export async function loadSignerContext(opts: { allowUnverified?: boolean } = {}
     ]);
     onHold = account?.trust_level === 'suspended' || org?.status === 'suspended';
   }
-  return { tokenId: tok.id as string, expiresAt: tok.expires_at as string, gate, onHold, recipient: recipient as SignerContext['recipient'], envelope: envelope as SignerContext['envelope'] };
+  return { tokenId: tok.id as string, expiresAt: tok.expires_at as string, gate, onHold, recipient: recipient as SignerContext['recipient'], envelope: envelope as SignerContext['envelope'], inPerson };
 }
 
 /** IP (null when it is not a real address, e.g. local development) and browser string for the audit trail. */

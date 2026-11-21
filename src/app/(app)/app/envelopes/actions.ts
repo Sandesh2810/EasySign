@@ -27,7 +27,7 @@ const recipientsSchema = z.object({
         id: z.uuid().nullable(),
         name: z.string().trim().min(1, 'Enter a name for every person.').max(120, 'Names can be up to 120 characters.'),
         email: z.string().trim().toLowerCase().max(254).pipe(z.email('Enter a valid email address for every person.')),
-        role: z.enum(['signer', 'approver', 'viewer', 'cc']),
+        role: z.enum(['signer', 'in_person', 'approver', 'viewer', 'cc']),
         order: z.number().int().min(1).max(99),
         // the extra identity check; the typed code is hashed below and never stored or logged as typed
         check: z.enum(['link', 'access_code', 'email_otp']).default('link'),
@@ -64,8 +64,11 @@ export async function saveRecipientsAction(envelopeId: string, input: unknown): 
   }
 
   const me = (user.email ?? '').toLowerCase();
-  // An extra check makes no sense for someone who only gets a copy, or for the sender signing their own document.
-  const wanted = recipients.map((r) => (r.role === 'cc' || r.email === me ? ('link' as const) : r.check));
+  // D-86: someone signing in person does so on the sender's device, so it cannot be the sender themselves
+  if (recipients.some((r) => r.role === 'in_person' && r.email === me)) return { ok: false, message: 'You cannot sign your own document in person. Choose "Signs" for yourself.' };
+  // An extra check makes no sense for someone who only gets a copy, for the sender signing their own document, or for
+  // someone signing in person (the host checks who they are)
+  const wanted = recipients.map((r) => (r.role === 'cc' || r.role === 'in_person' || r.email === me ? ('link' as const) : r.check));
   const codes: (string | null)[] = [];
   for (const [i, r] of recipients.entries()) {
     if (wanted[i] !== 'access_code' || r.code.trim() === '') {
