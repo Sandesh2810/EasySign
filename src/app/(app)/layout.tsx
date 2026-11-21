@@ -56,6 +56,9 @@ async function AccountMenu() {
       <Link href="/app/team" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
         Team
       </Link>
+      <Link href="/app/reports" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
+        Reports
+      </Link>
       <Link href="/app/notifications" className="inline-flex min-h-11 items-center text-sm font-medium text-ink">
         Notifications
         {unreadCount > 0 ? (

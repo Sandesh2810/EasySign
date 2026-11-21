@@ -456,6 +456,7 @@ async function main() {
       ['Sender: notifications', '/app/notifications'],
       ['Sender: settings', '/app/settings'],
       ['Sender: webhooks and a delivery log', `/app/settings/webhooks?log=${data.webhookId}`],
+      ['Sender: reports (last 30 days)', '/app/reports'],
       ['Sender: sign-in security', '/app/account/security'],
       ['Sender: team', '/app/team'],
       ['Sender: templates', '/app/templates'],
