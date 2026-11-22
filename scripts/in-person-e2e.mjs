@@ -178,6 +178,8 @@ async function main() {
     // ---------- consent by touch, then the inactivity lock ----------
     await tap(host, 'input[name="agree"]');
     await tap(host, 'button::-p-text(Agree and continue)');
+    // the tap is the last activity: the page's idle clock runs from here, however long the signing screen takes to load
+    const quietFrom = Date.now();
     await host.waitForSelector('button[aria-label^="Sign here"]', { timeout: 30000 }).catch(async () => {
       const state = await host.evaluate(() => {
         const box = document.querySelector('input[name="agree"]');
@@ -186,7 +188,6 @@ async function main() {
       });
       throw new Error(`no signing screen after agreeing: ${JSON.stringify(state)}; browser errors: ${hostErrors.join(' | ').slice(0, 600)}`);
     });
-    const quietFrom = Date.now();
     await host.waitForSelector('[role="alertdialog"]', { visible: true, timeout: 200_000 });
     const warnedAfter = Math.round((Date.now() - quietFrom) / 1000);
     await host.waitForFunction(() => document.body.innerText.includes('The screen is locked'), { timeout: 60_000 });

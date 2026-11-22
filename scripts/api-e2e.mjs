@@ -196,6 +196,9 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(`API E2E could not finish: ${e instanceof Error ? e.message : String(e)}`);
+  // the network error's own cause (for example a reset connection) and where it happened
+  const cause = e instanceof Error && e.cause ? ` (${e.cause.code ?? ''} ${e.cause.message ?? e.cause})` : '';
+  const where = e instanceof Error ? (e.stack ?? '').split('\n').slice(1, 4).join('\n') : '';
+  console.error(`API E2E could not finish: ${e instanceof Error ? e.message : String(e)}${cause}\n${where}`);
   process.exit(1);
 });

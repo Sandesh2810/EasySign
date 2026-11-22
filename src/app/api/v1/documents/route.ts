@@ -3,10 +3,12 @@ import { apiError, apiJson, authenticate, idempotent, readBody } from '@/lib/api
 import { ApiFailure, createFromTemplate, createInput } from '@/lib/api/documents';
 
 export async function POST(request: Request) {
+  // D-98: the (capped) body is read before the key is checked: answering 401/403 while the caller is still sending
+  // can reset the connection, so the caller would see a network error instead of the refusal
+  const read = await readBody(request, 64 * 1024);   // refused before reading when declared too big
+  if ('response' in read) return read.response;
   const auth = await authenticate(request, 'documents:write');
   if ('response' in auth) return auth.response;
-  const read = await readBody(request, 64 * 1024);   // D-98: refused before reading when too big
-  if ('response' in read) return read.response;
   const body = read.text;
   return idempotent(auth.ctx, request, '/api/v1/documents', body, async () => {
     let json: unknown;

@@ -72,7 +72,7 @@ function describe(rows: Row[], orders: number[]): string {
 }
 
 export function RecipientsEditor({ envelopeId, initial, initialMode, me }: { envelopeId: string; initial: EditableRecipient[]; initialMode: RoutingMode; me: { name: string; email: string } }) {
-  const [rows, setRows] = useState<Row[]>(() => (initial.length ? initial : [{ id: null, name: '', email: '', role: 'signer' as const, order: 1 }]).map((r) => ({ ...r, key: r.id ?? newKey(), code: '' })));
+  const [rows, setRows] = useState<Row[]>(() => (initial.length ? initial : [{ id: null, name: '', email: '', role: 'signer' as const, order: 1 }]).map((r, i) => ({ ...r, key: r.id ?? `start${i}`, code: '' })));   // a fixed key: the server and the browser must render the same ids
   const [mode, setMode] = useState<RoutingMode>(initialMode);
   const [dirty, setDirty] = useState(initial.length === 0);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
