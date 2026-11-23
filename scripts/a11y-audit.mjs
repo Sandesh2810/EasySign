@@ -460,6 +460,9 @@ async function main() {
       steps.push(await tabTo(page, /^agree$/, 'Space'));
       steps.push(await tabTo(page, /^Agree and continue$/, 'Enter'));
       await waitText(page, /\d+ of \d+ done/);
+      // the fields are drawn once the document's page has rendered (slow on a just-started development server):
+      // wait for the field to exist, as a person would, before walking to it with Tab (no mouse is used)
+      await page.waitForSelector('button[aria-label^="Sign here"]', { timeout: 60000 });
       await settle(page, 1500);
       steps.push(await tabTo(page, /^Sign here/, 'Enter'));
       await page.waitForSelector('[role="tablist"]', { visible: true, timeout: 15000 });

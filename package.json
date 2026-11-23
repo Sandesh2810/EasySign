@@ -23,6 +23,7 @@
     "verify:phase2": "node scripts/verify-phase2.mjs",
     "verify:phase3": "node scripts/verify-phase.mjs 3",
     "verify:phase4": "node scripts/verify-phase.mjs 4",
+    "deploy:server": "node scripts/deploy-server.mjs",
     "csp:report": "node scripts/csp-report.mjs",
     "backup": "node scripts/backup.mjs",
     "restore:drill": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/restore-drill.mjs",
