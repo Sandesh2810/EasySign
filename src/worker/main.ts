@@ -9,6 +9,7 @@ import { runOneSealJob } from './seal-job';
 import { archiveDue, ARCHIVE_AFTER_DAYS } from './audit-archive';
 import { runBulk } from './bulk';
 import { pruneIdempotency, pruneWebhooks, runWebhooks } from './webhooks';
+import { beat, BEAT_MS, liveWorkerRunning, refusal, release, siteOf } from './lease';
 
 const once = process.argv.includes('--once');
 // --archive-now [days] [document id]: archive the audit trails of documents finished at least [days] ago
@@ -89,13 +90,40 @@ async function webhookLoop(): Promise<void> {
   }
 }
 
+// D-99: the server and this PC share one database. The live site's worker records a heartbeat; a worker on a local
+// address never runs beside it (it would take the live site's emails and write them to a folder here).
+const me = siteOf(process.env.APP_URL);
+let lastLease = 0;
+
+/** False when this worker must not run (a local worker while the live one is running). */
+async function lease(): Promise<boolean> {
+  if (Date.now() - lastLease < BEAT_MS) return true;
+  lastLease = Date.now();
+  if (!me.local) {
+    if (!once) await beat(me.site, NOTIFY_MODE);
+    return true;
+  }
+  const live = await liveWorkerRunning();
+  if (!live) return true;
+  log(`not running: ${refusal(live)}`);
+  return false;
+}
+
 async function main() {
   log(`worker started (mode: ${once ? 'once' : 'loop'}, email: ${NOTIFY_MODE})`);
+  if (!(await lease())) {
+    process.exitCode = 3;
+    return;
+  }
   let failures = 0;
   const webhooks = once ? Promise.resolve() : webhookLoop();
   while (!stopping) {
     let busy = false;
     try {
+      if (!(await lease())) {
+        process.exitCode = 3;
+        break;
+      }
       busy = await tick(once);
       failures = 0;
     } catch (e) {
@@ -111,6 +139,7 @@ async function main() {
   }
   stopping = true;
   await webhooks;
+  if (!me.local && !once) await release(me.site).catch(() => undefined);   // stopped properly: no heartbeat left behind
   log('worker stopped');
 }
 

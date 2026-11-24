@@ -4,10 +4,13 @@
 // --start-after HH:MM waits until that UTC time first (for example just after the daily email reset, so emails the
 // checks need are not held back by the allowance). A check that failed because of the sign-in limit (30 a quarter hour
 // from one address) is tried once more after 15 minutes.
+// D-99: when the site is on a server (app\.env.deploy exists), the live worker is paused for the run and resumed at
+// the end, whatever happens: this PC and the server share one database, and two workers must not run side by side.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { serverWorker } from './server-worker.mjs';
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.resolve(appDir, '..', 'exports', 'phase5');
@@ -40,6 +43,31 @@ function run(script) {
   return { ok: r.status === 0, seconds: Math.round((Date.now() - t) / 1000), last: last.slice(0, 200), limited: /too many|rate.?limit|429/i.test(out) };
 }
 
+// ---------- the live worker steps aside for the run ----------
+const deployed = existsSync(path.join(appDir, '.env.deploy'));
+let wasRunning = false;
+if (deployed) {
+  const before = serverWorker('status');
+  if (before.state === 'unknown') {
+    console.error(`REGRESSION NOT STARTED: ${before.text}`);
+    process.exit(1);
+  }
+  wasRunning = before.state === 'online';
+  if (wasRunning) {
+    const paused = serverWorker('pause');
+    log(paused.text);
+    if (!paused.ok) process.exit(1);
+    await sleep(5000); // its heartbeat is removed as it stops
+  }
+}
+const resume = () => {
+  if (!deployed || !wasRunning) return;
+  const r = serverWorker('resume');
+  log(r.text);
+  if (!r.ok) console.error('THE LIVE WORKER IS STILL PAUSED. Run: npm run server:worker -- resume');
+};
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { resume(); process.exit(130); });
+
 const results = [];
 for (const name of CHECKS) {
   log(`e2e:${name}…`);
@@ -64,6 +92,7 @@ const md = [`# Regression, ${at.slice(0, 16).replace('T', ' ')} UTC`, '', '| Che
 const file = path.join(OUT, `regression-${at.replace(/[:.]/g, '-')}.md`);
 writeFileSync(file, md);
 console.log(`\n${md}`);
+resume();
 const failed = results.filter((r) => !r.ok).map((r) => r.name);
 console.log(failed.length ? `REGRESSION FAILED: ${failed.join(', ')} (summary ${file})` : `REGRESSION PASSED (${results.length} checks; summary ${file})`);
 process.exit(failed.length ? 1 : 0);
