@@ -1,0 +1,31 @@
+# /etc/systemd/system/easysign-pm2.service
+# Starts YouNMeSign's two processes (easysign-web, easysign-worker) after a reboot and caps what they may use,
+# so they cannot starve the other app on this server. It runs as the user "easysign" and manages nothing else.
+[Unit]
+Description=YouNMeSign processes (PM2, user easysign)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=easysign
+Group=easysign
+Environment=PATH=/home/easysign/node/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PM2_HOME=/home/easysign/.pm2
+Environment=EASYSIGN_HOME=/home/easysign
+Environment=EASYSIGN_PORT=3210
+PIDFile=/home/easysign/.pm2/pm2.pid
+ExecStart=/home/easysign/node/bin/pm2 resurrect
+ExecReload=/home/easysign/node/bin/pm2 reload all
+ExecStop=/home/easysign/node/bin/pm2 kill
+Restart=on-failure
+RestartSec=10
+# limits for everything these processes use together
+MemoryHigh=1000M
+MemoryMax=1200M
+CPUWeight=50
+TasksMax=300
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
